@@ -48,7 +48,7 @@ function UI.Init(Pets, Sleep, Care, Remotes)
     local PetAilmentCache = {}
     local dataChangedAutofarmThrottle = setmetatable({}, {__mode = "k"})
 
-    --// Ailment Viewer UI (separate status panel)
+    --// Ailment tracking (labels will be created after Rayfield Tab exists)
     local ailmentsToTrack = {
         "sleepy",
         "dirty",
@@ -61,79 +61,17 @@ function UI.Init(Pets, Sleep, Care, Remotes)
 
     local ailmentLabels = {}
 
-    pcall(function()
-        local existing = playerGui:FindFirstChild("AilmentViewer")
-        if existing then
-            existing:Destroy()
-        end
-    end)
-
-    local AilmentGui = Instance.new("ScreenGui")
-    AilmentGui.Name = "AilmentViewer"
-    AilmentGui.ResetOnSpawn = false
-    AilmentGui.Parent = playerGui
-
-    local AilmentMain = Instance.new("Frame")
-    AilmentMain.Size = UDim2.new(0, 220, 0, 40 + (#ailmentsToTrack * 34))
-    AilmentMain.Position = UDim2.new(0, 300, 0.5, -(20 + (#ailmentsToTrack * 17)))
-    AilmentMain.BackgroundColor3 = Color3.fromRGB(20,20,20)
-    AilmentMain.BorderSizePixel = 0
-    AilmentMain.Parent = AilmentGui
-
-    local AilmentCorner = Instance.new("UICorner")
-    AilmentCorner.CornerRadius = UDim.new(0,12)
-    AilmentCorner.Parent = AilmentMain
-
-    local AilmentTitle = Instance.new("TextLabel")
-    AilmentTitle.Size = UDim2.new(1,0,0,30)
-    AilmentTitle.BackgroundTransparency = 1
-    AilmentTitle.Text = "Ailment Status"
-    AilmentTitle.Font = Enum.Font.GothamBold
-    AilmentTitle.TextSize = 18
-    AilmentTitle.TextColor3 = Color3.new(1,1,1)
-    AilmentTitle.Parent = AilmentMain
-
-    local AilmentContainer = Instance.new("Frame")
-    AilmentContainer.BackgroundTransparency = 1
-    AilmentContainer.Size = UDim2.new(1,-10,1,-40)
-    AilmentContainer.Position = UDim2.new(0,5,0,35)
-    AilmentContainer.Parent = AilmentMain
-
-    local AilmentLayout = Instance.new("UIListLayout")
-    AilmentLayout.Padding = UDim.new(0,4)
-    AilmentLayout.Parent = AilmentContainer
-
-    local function createAilmentLabel(name)
-        local Label = Instance.new("TextLabel")
-        Label.Name = name
-        Label.Size = UDim2.new(1,0,0,30)
-        Label.BackgroundColor3 = Color3.fromRGB(35,35,35)
-        Label.TextColor3 = Color3.fromRGB(255,80,80)
-        Label.Font = Enum.Font.GothamBold
-        Label.TextSize = 16
-        Label.Text = name .. ": false"
-        Label.Parent = AilmentContainer
-
-        local C = Instance.new("UICorner")
-        C.CornerRadius = UDim.new(0,8)
-        C.Parent = Label
-
-        ailmentLabels[name] = Label
-    end
-
-    for _, name in ipairs(ailmentsToTrack) do
-        createAilmentLabel(name)
-    end
-
     local function setAilment(name, state)
         local label = ailmentLabels[name]
         if not label then return end
-        if state then
-            label.Text = name .. ": true"
-            label.TextColor3 = Color3.fromRGB(80,255,120)
+        local text = name .. ": " .. (state and "true" or "false")
+        if type(label) == "table" and type(label.Set) == "function" then
+            label:Set(text)
         else
-            label.Text = name .. ": false"
-            label.TextColor3 = Color3.fromRGB(255,80,80)
+            pcall(function()
+                label.Text = text
+                label.TextColor3 = state and Color3.fromRGB(80,255,120) or Color3.fromRGB(255,80,80)
+            end)
         end
     end
 
@@ -314,6 +252,13 @@ function UI.Init(Pets, Sleep, Care, Remotes)
     local StatusCategory = Tab:CreateSection("Status")
     local StatusLabel = Tab:CreateLabel("Status: Ready")
     local PetStatusLabel = Tab:CreateLabel("Pet Status: unknown")
+
+    --// Ailment labels in Rayfield (placed under Controls tab)
+    local AilmentSection = Tab:CreateSection("Ailments")
+    for _, name in ipairs(ailmentsToTrack) do
+        local lbl = Tab:CreateLabel(name .. ": false")
+        ailmentLabels[name] = lbl
+    end
 
     --// Create Sections
     local PetSection = Tab:CreateSection("Pet Selection")
