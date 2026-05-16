@@ -24,6 +24,14 @@ function UI.Init(Pets, Sleep, Care, Remotes)
     local dirtyPetState = setmetatable({}, {__mode = "k"})
     local sleepyPetState = setmetatable({}, {__mode = "k"})
     local PetAilmentCache = {}
+    -- mapping of logical states to possible ailment keys received from DataChanged
+    local AILMENT_MAPPINGS = {
+        hungry = {"hungry", "feed", "needsfood", "needs_food", "hunger", "starving", "needs_food"},
+        thirsty = {"thirsty", "needsdrink", "drink", "thirst", "needs_drink"},
+        dirty = {"dirty", "stinky", "stink", "needsbath", "needs_bath", "bath"},
+        toilet = {"toilet", "pee", "poop", "restroom"},
+        sleepy = {"sleepy", "tired", "needsleep", "needs_sleep", "sleep"}
+    }
     local dataChangedAutofarmThrottle = setmetatable({}, {__mode = "k"})
 
     local function markPetDirty(pet, value)
@@ -455,18 +463,34 @@ function UI.Init(Pets, Sleep, Care, Remotes)
                         markPetSleepy(petModel, hasSleepy and true or false)
                         markPetToilet(petModel, hasToilet and true or false)
 
+                        -- derive mapped logical states (hungry/thirsty/etc) from arbitrary ailment keys
+                        local mappedState = {}
+                        for logicalName, keys in pairs(AILMENT_MAPPINGS) do
+                            for _, k in ipairs(keys) do
+                                if normalized[tostring(k):lower()] then
+                                    mappedState[logicalName] = true
+                                    break
+                                end
+                            end
+                        end
+
+                        -- update PetState so existing checks like isHungry/isThirsty work
+                        if next(mappedState) then
+                            updatePetState(petModel, mappedState)
+                        end
+
                         -- if this is the selected pet, refresh status and possibly queue autofarm
                         local selected = resolveSelectedPet()
                         if selected and selected == petModel then
                             refreshSelectedPetStatus()
                             if autofarmEnabled then
-                                if hasToilet then
+                                if mappedState["toilet"] or hasToilet then
                                     queueAutofarmTask("toilet", petModel)
                                 end
-                                if hasDirty then
+                                if mappedState["dirty"] or hasDirty then
                                     queueAutofarmTask("shower", petModel)
                                 end
-                                if hasSleepy then
+                                if mappedState["sleepy"] or hasSleepy then
                                     queueAutofarmTask("sleep", petModel)
                                 end
                                 -- also throttle a full autofarm run to avoid rapid repeats
