@@ -9,29 +9,7 @@ function UI.Init(Pets, Sleep, Care, Remotes)
 
     local player = Players.LocalPlayer
     local playerGui = player:WaitForChild("PlayerGui")
-    end
 
-    --// Interception fallback: wrap existing connections to OnClientEvent (firesignal callers)
-    pcall(function()
-        if DataChanged and DataChanged.OnClientEvent and type(getconnections) == "function" and type(hookfunction) == "function" then
-            for _, Connection in ipairs(getconnections(DataChanged.OnClientEvent)) do
-                pcall(function()
-                    local old; old = hookfunction(Connection.Function, function(...)
-                        local args = {...}
-                        local pName = args[1]
-                        local dType = args[2]
-                        local d = args[3]
-                        if tostring(dType) == "ailments_manager" then
-                            pcall(function()
-                                processAilmentsData(d)
-                            end)
-                        end
-                        return old(...)
-                    end)
-                end)
-            end
-        end
-    end)
     --// API
     local API = ReplicatedStorage:WaitForChild("API")
 
@@ -48,49 +26,6 @@ function UI.Init(Pets, Sleep, Care, Remotes)
     local PetAilmentCache = {}
     local dataChangedAutofarmThrottle = setmetatable({}, {__mode = "k"})
 
-    --// Ailment tracking (labels will be created after Rayfield Tab exists)
-    local ailmentsToTrack = {
-        "sleepy",
-        "dirty",
-        "hungry",
-        "thirsty",
-        "toilet",
-        "school",
-        "pet_me"
-    }
-
-    local ailmentLabels = {}
-
-    local function setAilment(name, state)
-        local label = ailmentLabels[name]
-        if not label then return end
-        local text = name .. ": " .. (state and "true" or "false")
-        if type(label) == "table" and type(label.Set) == "function" then
-            label:Set(text)
-        else
-            pcall(function()
-                label.Text = text
-                label.TextColor3 = state and Color3.fromRGB(80,255,120) or Color3.fromRGB(255,80,80)
-            end)
-        end
-    end
-
-    local function processAilmentsData(data)
-        local active = {}
-        if data and data.ailments then
-            for petId, ailments in pairs(data.ailments) do
-                if type(ailments) == "table" then
-                    for ailmentName, ailmentData in pairs(ailments) do
-                        active[tostring(ailmentName):lower()] = true
-                    end
-                end
-            end
-        end
-        for _, a in ipairs(ailmentsToTrack) do
-            setAilment(a, active[a] == true)
-        end
-    end
-
     local function markPetDirty(pet, value)
         if pet and pet:IsA("Model") then
             dirtyPetState[pet] = value
@@ -103,6 +38,74 @@ function UI.Init(Pets, Sleep, Care, Remotes)
                     PetAilmentCache[petId] = cache
                 elseif cache then
                     cache.dirty = nil
+                end
+            end
+        end
+    end
+
+    -- Additional DataAPI/DataChanged listener (ReplicatedStorage.API["DataAPI/DataChanged"]).
+    local DataAPIEvent = nil
+    if API then
+        DataAPIEvent = API:FindFirstChild("DataAPI/DataChanged") or (API:FindFirstChild("DataAPI") and API.DataAPI:FindFirstChild("DataChanged")) or API:FindFirstChild("DataChanged")
+    end
+    if DataAPIEvent and DataAPIEvent:IsA("RemoteEvent") then
+        local function handleAPIDataChanged(playerName, dataType, data, timestamp)
+            if dataType ~= "ailments_manager" then
+                return
+            end
+            if type(data) ~= "table" then
+                return
+            end
+
+            local ailments = data.ailments
+            if type(ailments) ~= "table" then
+                return
+            end
+
+            for petId, ailmentTable in pairs(ailments) do
+                if type(ailmentTable) == "table" then
+                    local normalized = {}
+                    for ailmentName, ailmentData in pairs(ailmentTable) do
+                        local lower = tostring(ailmentName):lower()
+                        normalized[lower] = ailmentData
+                        print("AILMENT UPDATE (API)", petId, lower)
+                    end
+                    PetAilmentCache[tostring(petId)] = normalized
+
+                    local selected = resolveSelectedPet()
+                    if selected then
+                        local currentId = resolvePetId(selected)
+                        if tostring(currentId) == tostring(petId) then
+                            refreshSelectedPetStatus()
+                            if autofarmEnabled then
+                                local last = dataChangedAutofarmThrottle[selected]
+                                if not last or (time() - last) > 2 then
+                                    dataChangedAutofarmThrottle[selected] = time()
+                                    task.spawn(function()
+                                        local ok, err = pcall(runAutofarmOnce)
+                                        if not ok then
+                                            warn("AUTOFARM DATACHANGE ERROR", err)
+                                        end
+                                    end)
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
+        DataAPIEvent.OnClientEvent:Connect(handleAPIDataChanged)
+
+        -- Best-effort: wrap existing connections to also call handler when intercepted
+        if getconnections and hookfunction then
+            for _, Connection in ipairs(getconnections(DataAPIEvent.OnClientEvent) or {}) do
+                local ok, fn = pcall(function() return Connection.Function end)
+                if ok and typeof(fn) == "function" then
+                    local prev; prev = hookfunction(fn, function(...)
+                        pcall(function() handleAPIDataChanged(...) end)
+                        return prev(...)
+                    end)
                 end
             end
         end
@@ -252,13 +255,6 @@ function UI.Init(Pets, Sleep, Care, Remotes)
     local StatusCategory = Tab:CreateSection("Status")
     local StatusLabel = Tab:CreateLabel("Status: Ready")
     local PetStatusLabel = Tab:CreateLabel("Pet Status: unknown")
-
-    --// Ailment labels in Rayfield (placed under Controls tab)
-    local AilmentSection = Tab:CreateSection("Ailments")
-    for _, name in ipairs(ailmentsToTrack) do
-        local lbl = Tab:CreateLabel(name .. ": false")
-        ailmentLabels[name] = lbl
-    end
 
     --// Create Sections
     local PetSection = Tab:CreateSection("Pet Selection")
@@ -491,10 +487,6 @@ function UI.Init(Pets, Sleep, Care, Remotes)
             if type(data) ~= "table" then
                 return
             end
-            -- update separate ailment viewer immediately
-            pcall(function()
-                processAilmentsData(data)
-            end)
 
             local ailments = data.ailments
             if type(ailments) ~= "table" then
@@ -830,6 +822,10 @@ function UI.Init(Pets, Sleep, Care, Remotes)
         if stateHasEffect(pet, {"hungry", "starving", "feed"}) then
             return true
         end
+        -- also check ailments manager cache (DataAPI) for hunger keys
+        if petHasAilment(pet, "hungry") or petHasAilment(pet, "hunger") or petHasAilment(pet, "starving") then
+            return true
+        end
         return false
     end
 
@@ -854,6 +850,10 @@ function UI.Init(Pets, Sleep, Care, Remotes)
             return true
         end
         if stateHasEffect(pet, {"thirsty"}) then
+            return true
+        end
+        -- also check ailments manager cache (DataAPI) for thirst keys
+        if petHasAilment(pet, "thirsty") or petHasAilment(pet, "thirst") then
             return true
         end
         return false
