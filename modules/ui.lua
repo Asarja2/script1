@@ -43,74 +43,6 @@ function UI.Init(Pets, Sleep, Care, Remotes)
         end
     end
 
-    -- Additional DataAPI/DataChanged listener (ReplicatedStorage.API["DataAPI/DataChanged"]).
-    local DataAPIEvent = nil
-    if API then
-        DataAPIEvent = API:FindFirstChild("DataAPI/DataChanged") or (API:FindFirstChild("DataAPI") and API.DataAPI:FindFirstChild("DataChanged")) or API:FindFirstChild("DataChanged")
-    end
-    if DataAPIEvent and DataAPIEvent:IsA("RemoteEvent") then
-        local function handleAPIDataChanged(playerName, dataType, data, timestamp)
-            if dataType ~= "ailments_manager" then
-                return
-            end
-            if type(data) ~= "table" then
-                return
-            end
-
-            local ailments = data.ailments
-            if type(ailments) ~= "table" then
-                return
-            end
-
-            for petId, ailmentTable in pairs(ailments) do
-                if type(ailmentTable) == "table" then
-                    local normalized = {}
-                    for ailmentName, ailmentData in pairs(ailmentTable) do
-                        local lower = tostring(ailmentName):lower()
-                        normalized[lower] = ailmentData
-                        print("AILMENT UPDATE (API)", petId, lower)
-                    end
-                    PetAilmentCache[tostring(petId)] = normalized
-
-                    local selected = resolveSelectedPet()
-                    if selected then
-                        local currentId = resolvePetId(selected)
-                        if tostring(currentId) == tostring(petId) then
-                            refreshSelectedPetStatus()
-                            if autofarmEnabled then
-                                local last = dataChangedAutofarmThrottle[selected]
-                                if not last or (time() - last) > 2 then
-                                    dataChangedAutofarmThrottle[selected] = time()
-                                    task.spawn(function()
-                                        local ok, err = pcall(runAutofarmOnce)
-                                        if not ok then
-                                            warn("AUTOFARM DATACHANGE ERROR", err)
-                                        end
-                                    end)
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-        end
-
-        DataAPIEvent.OnClientEvent:Connect(handleAPIDataChanged)
-
-        -- Best-effort: wrap existing connections to also call handler when intercepted
-        if getconnections and hookfunction then
-            for _, Connection in ipairs(getconnections(DataAPIEvent.OnClientEvent) or {}) do
-                local ok, fn = pcall(function() return Connection.Function end)
-                if ok and typeof(fn) == "function" then
-                    local prev; prev = hookfunction(fn, function(...)
-                        pcall(function() handleAPIDataChanged(...) end)
-                        return prev(...)
-                    end)
-                end
-            end
-        end
-    end
-
     local function markPetSleepy(pet, value)
         if pet and pet:IsA("Model") then
             sleepyPetState[pet] = value
@@ -822,10 +754,6 @@ function UI.Init(Pets, Sleep, Care, Remotes)
         if stateHasEffect(pet, {"hungry", "starving", "feed"}) then
             return true
         end
-        -- also check ailments manager cache (DataAPI) for hunger keys
-        if petHasAilment(pet, "hungry") or petHasAilment(pet, "hunger") or petHasAilment(pet, "starving") then
-            return true
-        end
         return false
     end
 
@@ -850,10 +778,6 @@ function UI.Init(Pets, Sleep, Care, Remotes)
             return true
         end
         if stateHasEffect(pet, {"thirsty"}) then
-            return true
-        end
-        -- also check ailments manager cache (DataAPI) for thirst keys
-        if petHasAilment(pet, "thirsty") or petHasAilment(pet, "thirst") then
             return true
         end
         return false
