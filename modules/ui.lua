@@ -60,6 +60,22 @@ function UI.Init(Pets, Sleep, Care, Remotes)
         end
     end
 
+    local function markPetToilet(pet, value)
+        if pet and pet:IsA("Model") then
+            local petId = resolvePetId(pet)
+            if petId then
+                local cache = PetAilmentCache[petId]
+                if value then
+                    cache = cache or {}
+                    cache.toilet = true
+                    PetAilmentCache[petId] = cache
+                elseif cache then
+                    cache.toilet = nil
+                end
+            end
+        end
+    end
+
     local currentAutofarmTask = nil
     local autofarmTaskQueue = {}
 
@@ -81,6 +97,8 @@ function UI.Init(Pets, Sleep, Care, Remotes)
             performAutoShower(task.pet)
         elseif task.type == "sleep" then
             performAutoSleep(task.pet)
+        elseif task.type == "toilet" then
+            performAutoToilet(task.pet)
         end
     end
 
@@ -165,11 +183,9 @@ function UI.Init(Pets, Sleep, Care, Remotes)
     --// Create Tab
     local Tab = Window:CreateTab("Controls", 0)
 
-    --// Status Label
-    local StatusLabel = Tab:CreateLabel("Status: Ready")
-
-    --// Pet Status Section
+    --// Status Section
     local StatusCategory = Tab:CreateSection("Status")
+    local StatusLabel = Tab:CreateLabel("Status: Ready")
     local PetStatusLabel = Tab:CreateLabel("Pet Status: unknown")
 
     --// Create Sections
@@ -745,7 +761,8 @@ function UI.Init(Pets, Sleep, Care, Remotes)
         return {
             dirty = isDirty(pet),
             sleepy = isSleepy(pet),
-            hungry = isHungry(pet)
+            hungry = isHungry(pet),
+            toilet = petHasAilment(pet, "toilet")
         }
     end
 
@@ -978,6 +995,42 @@ function UI.Init(Pets, Sleep, Care, Remotes)
         queueAutofarmTask("sleep", pet)
     end
 
+    local autoToiletThrottle = {}
+
+    local function canAutoToiletForPet(pet)
+        if not pet then
+            return false
+        end
+        if not autofarmEnabled then
+            return false
+        end
+        local last = autoToiletThrottle[pet]
+        if last and (time() - last) < 5 then
+            return false
+        end
+        return true
+    end
+
+    local function markAutoToilet(pet)
+        if pet then
+            autoToiletThrottle[pet] = time()
+        end
+    end
+
+    local function attemptAutoToilet(pet, source)
+        local currentPet = resolveSelectedPet()
+        if not currentPet or currentPet ~= pet then
+            return
+        end
+        if not canAutoToiletForPet(pet) then
+            return
+        end
+        if not petHasAilment(pet, "toilet") then
+            return
+        end
+        queueAutofarmTask("toilet", pet)
+    end
+
     local function performAutoSleep(pet)
         local furnitureId, seat = Sleep.FindBed()
         if not furnitureId or not seat then
@@ -1000,6 +1053,31 @@ function UI.Init(Pets, Sleep, Care, Remotes)
                 updateStatus("Auto sleep failed")
             else
                 updateStatus(pet.Name .. " is sleeping")
+            end
+            executeNextAutofarmTask()
+        end)
+    end
+
+    local function performAutoToilet(pet)
+        local furnitureId, seat = Care.FindToilet()
+        if not furnitureId or not seat then
+            updateStatus("Auto-toilet: no toilet found")
+            warn("AUTO TOILET: no toilet found")
+            executeNextAutofarmTask()
+            return
+        end
+
+        updateStatus("Auto-toilet triggered")
+        print("DEBUG AUTO-TOILET", pet.Name)
+        markAutoToilet(pet)
+
+        task.spawn(function()
+            local success, err = performFurnitureActivation(furnitureId, seat, "Seat1", "toilet")
+            if not success then
+                warn("AUTO TOILET ERROR", err)
+                updateStatus("Auto toilet failed")
+            else
+                updateStatus(pet.Name .. " is using the toilet")
             end
             executeNextAutofarmTask()
         end)
@@ -1366,6 +1444,21 @@ function UI.Init(Pets, Sleep, Care, Remotes)
                 return false, err
             end
             updateStatus(selectedPet.Name .. " is drinking")
+            return true
+        end
+
+        if needs.toilet then
+            updateStatus("Pet needs toilet, teleporting to restroom...")
+            local furnitureId, obj = Care.FindToilet()
+            print("DEBUG AUTOFARM: Care.FindToilet returned", furnitureId, obj and obj:GetFullName() or nil)
+            local success, err = performFurnitureActivation(furnitureId, obj, "Seat1", "toilet")
+            if not success then
+                warn("AUTOFARM TOILET ERROR", err)
+                return false, err
+            end
+            markPetToilet(selectedPet, false)
+            refreshSelectedPetStatus()
+            updateStatus(selectedPet.Name .. " is using the toilet")
             return true
         end
 
