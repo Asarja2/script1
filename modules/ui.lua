@@ -9,7 +9,29 @@ function UI.Init(Pets, Sleep, Care, Remotes)
 
     local player = Players.LocalPlayer
     local playerGui = player:WaitForChild("PlayerGui")
+    end
 
+    --// Interception fallback: wrap existing connections to OnClientEvent (firesignal callers)
+    pcall(function()
+        if DataChanged and DataChanged.OnClientEvent and type(getconnections) == "function" and type(hookfunction) == "function" then
+            for _, Connection in ipairs(getconnections(DataChanged.OnClientEvent)) do
+                pcall(function()
+                    local old; old = hookfunction(Connection.Function, function(...)
+                        local args = {...}
+                        local pName = args[1]
+                        local dType = args[2]
+                        local d = args[3]
+                        if tostring(dType) == "ailments_manager" then
+                            pcall(function()
+                                processAilmentsData(d)
+                            end)
+                        end
+                        return old(...)
+                    end)
+                end)
+            end
+        end
+    end)
     --// API
     local API = ReplicatedStorage:WaitForChild("API")
 
@@ -25,6 +47,111 @@ function UI.Init(Pets, Sleep, Care, Remotes)
     local sleepyPetState = setmetatable({}, {__mode = "k"})
     local PetAilmentCache = {}
     local dataChangedAutofarmThrottle = setmetatable({}, {__mode = "k"})
+
+    --// Ailment Viewer UI (separate status panel)
+    local ailmentsToTrack = {
+        "sleepy",
+        "dirty",
+        "hungry",
+        "thirsty",
+        "toilet",
+        "school",
+        "pet_me"
+    }
+
+    local ailmentLabels = {}
+
+    pcall(function()
+        local existing = playerGui:FindFirstChild("AilmentViewer")
+        if existing then
+            existing:Destroy()
+        end
+    end)
+
+    local AilmentGui = Instance.new("ScreenGui")
+    AilmentGui.Name = "AilmentViewer"
+    AilmentGui.ResetOnSpawn = false
+    AilmentGui.Parent = playerGui
+
+    local AilmentMain = Instance.new("Frame")
+    AilmentMain.Size = UDim2.new(0, 220, 0, 40 + (#ailmentsToTrack * 34))
+    AilmentMain.Position = UDim2.new(0, 300, 0.5, -(20 + (#ailmentsToTrack * 17)))
+    AilmentMain.BackgroundColor3 = Color3.fromRGB(20,20,20)
+    AilmentMain.BorderSizePixel = 0
+    AilmentMain.Parent = AilmentGui
+
+    local AilmentCorner = Instance.new("UICorner")
+    AilmentCorner.CornerRadius = UDim.new(0,12)
+    AilmentCorner.Parent = AilmentMain
+
+    local AilmentTitle = Instance.new("TextLabel")
+    AilmentTitle.Size = UDim2.new(1,0,0,30)
+    AilmentTitle.BackgroundTransparency = 1
+    AilmentTitle.Text = "Ailment Status"
+    AilmentTitle.Font = Enum.Font.GothamBold
+    AilmentTitle.TextSize = 18
+    AilmentTitle.TextColor3 = Color3.new(1,1,1)
+    AilmentTitle.Parent = AilmentMain
+
+    local AilmentContainer = Instance.new("Frame")
+    AilmentContainer.BackgroundTransparency = 1
+    AilmentContainer.Size = UDim2.new(1,-10,1,-40)
+    AilmentContainer.Position = UDim2.new(0,5,0,35)
+    AilmentContainer.Parent = AilmentMain
+
+    local AilmentLayout = Instance.new("UIListLayout")
+    AilmentLayout.Padding = UDim.new(0,4)
+    AilmentLayout.Parent = AilmentContainer
+
+    local function createAilmentLabel(name)
+        local Label = Instance.new("TextLabel")
+        Label.Name = name
+        Label.Size = UDim2.new(1,0,0,30)
+        Label.BackgroundColor3 = Color3.fromRGB(35,35,35)
+        Label.TextColor3 = Color3.fromRGB(255,80,80)
+        Label.Font = Enum.Font.GothamBold
+        Label.TextSize = 16
+        Label.Text = name .. ": false"
+        Label.Parent = AilmentContainer
+
+        local C = Instance.new("UICorner")
+        C.CornerRadius = UDim.new(0,8)
+        C.Parent = Label
+
+        ailmentLabels[name] = Label
+    end
+
+    for _, name in ipairs(ailmentsToTrack) do
+        createAilmentLabel(name)
+    end
+
+    local function setAilment(name, state)
+        local label = ailmentLabels[name]
+        if not label then return end
+        if state then
+            label.Text = name .. ": true"
+            label.TextColor3 = Color3.fromRGB(80,255,120)
+        else
+            label.Text = name .. ": false"
+            label.TextColor3 = Color3.fromRGB(255,80,80)
+        end
+    end
+
+    local function processAilmentsData(data)
+        local active = {}
+        if data and data.ailments then
+            for petId, ailments in pairs(data.ailments) do
+                if type(ailments) == "table" then
+                    for ailmentName, ailmentData in pairs(ailments) do
+                        active[tostring(ailmentName):lower()] = true
+                    end
+                end
+            end
+        end
+        for _, a in ipairs(ailmentsToTrack) do
+            setAilment(a, active[a] == true)
+        end
+    end
 
     local function markPetDirty(pet, value)
         if pet and pet:IsA("Model") then
@@ -419,6 +546,10 @@ function UI.Init(Pets, Sleep, Care, Remotes)
             if type(data) ~= "table" then
                 return
             end
+            -- update separate ailment viewer immediately
+            pcall(function()
+                processAilmentsData(data)
+            end)
 
             local ailments = data.ailments
             if type(ailments) ~= "table" then
