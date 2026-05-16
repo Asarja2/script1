@@ -24,16 +24,39 @@ function UI.Init(Pets, Sleep, Care, Remotes)
     local dirtyPetState = setmetatable({}, {__mode = "k"})
     local sleepyPetState = setmetatable({}, {__mode = "k"})
     local PetAilmentCache = {}
+    local dataChangedAutofarmThrottle = setmetatable({}, {__mode = "k"})
 
     local function markPetDirty(pet, value)
         if pet and pet:IsA("Model") then
             dirtyPetState[pet] = value
+            local petId = resolvePetId(pet)
+            if petId then
+                local cache = PetAilmentCache[petId]
+                if value then
+                    cache = cache or {}
+                    cache.dirty = true
+                    PetAilmentCache[petId] = cache
+                elseif cache then
+                    cache.dirty = nil
+                end
+            end
         end
     end
 
     local function markPetSleepy(pet, value)
         if pet and pet:IsA("Model") then
             sleepyPetState[pet] = value
+            local petId = resolvePetId(pet)
+            if petId then
+                local cache = PetAilmentCache[petId]
+                if value then
+                    cache = cache or {}
+                    cache.sleepy = true
+                    PetAilmentCache[petId] = cache
+                elseif cache then
+                    cache.sleepy = nil
+                end
+            end
         end
     end
 
@@ -144,6 +167,10 @@ function UI.Init(Pets, Sleep, Care, Remotes)
 
     --// Status Label
     local StatusLabel = Tab:CreateLabel("Status: Ready")
+
+    --// Pet Status Section
+    local StatusCategory = Tab:CreateSection("Status")
+    local PetStatusLabel = Tab:CreateLabel("Pet Status: unknown")
 
     --// Create Sections
     local PetSection = Tab:CreateSection("Pet Selection")
@@ -282,6 +309,45 @@ function UI.Init(Pets, Sleep, Care, Remotes)
         return cache[tostring(ailmentName):lower()] ~= nil
     end
 
+    local function getPetStatusText(pet)
+        if not pet then
+            return "Pet Status: no pet selected"
+        end
+
+        local statuses = {}
+        if isSleeping(pet) then
+            table.insert(statuses, "Sleeping")
+        end
+        if isDirty(pet) then
+            table.insert(statuses, "Dirty")
+        end
+        if isSleepy(pet) then
+            table.insert(statuses, "Sleepy")
+        end
+        if isHungry(pet) then
+            table.insert(statuses, "Hungry")
+        end
+        if isThirsty(pet) then
+            table.insert(statuses, "Thirsty")
+        end
+        if petHasAilment(pet, "toilet") then
+            table.insert(statuses, "Needs toilet")
+        end
+
+        if #statuses == 0 then
+            return "Pet Status: no needs detected"
+        end
+
+        return "Pet Status: " .. table.concat(statuses, ", ")
+    end
+
+    local function refreshSelectedPetStatus()
+        local pet = resolveSelectedPet()
+        if PetStatusLabel then
+            PetStatusLabel:Set(getPetStatusText(pet))
+        end
+    end
+
     --// Debug Remote Listeners
     if ReplicatePerformanceModifiers and ReplicatePerformanceModifiers:IsA("RemoteEvent") then
         ReplicatePerformanceModifiers.OnClientEvent:Connect(function(pet, data)
@@ -357,11 +423,18 @@ function UI.Init(Pets, Sleep, Care, Remotes)
                     if selected then
                         local currentId = resolvePetId(selected)
                         if tostring(currentId) == tostring(petId) then
-                            if normalized["dirty"] then
-                                markPetDirty(selected, true)
-                            end
-                            if normalized["sleepy"] then
-                                markPetSleepy(selected, true)
+                            refreshSelectedPetStatus()
+                            if autofarmEnabled then
+                                local last = dataChangedAutofarmThrottle[selected]
+                                if not last or (time() - last) > 2 then
+                                    dataChangedAutofarmThrottle[selected] = time()
+                                    task.spawn(function()
+                                        local ok, err = pcall(runAutofarmOnce)
+                                        if not ok then
+                                            warn("AUTOFARM DATACHANGE ERROR", err)
+                                        end
+                                    end)
+                                end
                             end
                         end
                     end
@@ -390,9 +463,11 @@ function UI.Init(Pets, Sleep, Care, Remotes)
             if selectedPet then
                 print("DEBUG: pet selected", selectedPet.Name, selectedPet:GetFullName())
                 updateStatus("Selected: " .. selectedPet.Name)
+                refreshSelectedPetStatus()
             else
                 warn("DEBUG: selected pet by name not found", selectedName)
                 updateStatus("Selected pet not found live")
+                refreshSelectedPetStatus()
             end
         end
     })
@@ -423,6 +498,7 @@ function UI.Init(Pets, Sleep, Care, Remotes)
                     selectedPet = pets[1]
                     updateStatus("Auto-selected: " .. pets[1].Name)
                 end
+                refreshSelectedPetStatus()
             else
                 warn("PetDropdown is nil in refreshPets")
             end
@@ -849,6 +925,7 @@ function UI.Init(Pets, Sleep, Care, Remotes)
         updateStatus("Auto-shower triggered")
         print("DEBUG AUTO-SHOWER", pet.Name)
         markPetDirty(pet, false)
+        refreshSelectedPetStatus()
 
         task.spawn(function()
             local success, err = performFurnitureActivation(furnitureId, obj, "UseBlock", "shower")
@@ -914,6 +991,7 @@ function UI.Init(Pets, Sleep, Care, Remotes)
         print("DEBUG AUTO-SLEEP", pet.Name)
         markAutoSleep(pet)
         markPetSleepy(pet, false)
+        refreshSelectedPetStatus()
 
         task.spawn(function()
             local success, err = performFurnitureActivation(furnitureId, seat, "Seat1", "bed")
@@ -1346,6 +1424,7 @@ function UI.Init(Pets, Sleep, Care, Remotes)
         else
             updateStatus("Autofarm disabled")
         end
+        refreshSelectedPetStatus()
     end
 
     --// Autofarm Toggle
@@ -1360,6 +1439,7 @@ function UI.Init(Pets, Sleep, Care, Remotes)
 
     --// Initial Refresh
     refreshPets()
+    refreshSelectedPetStatus()
 
     --// Remote Debug Logger
     print("=== PET APIS ===")
