@@ -20,6 +20,33 @@ function UI.Init(Pets, Sleep, Care, Remotes)
     local ReplicateActivePerformances = Remotes.ReplicateActivePerformances
     local ReplicateActiveReactions = Remotes.ReplicateActiveReactions
     local DataChanged = Remotes.DataChanged
+    local handleDataChanged
+    local handleDataChangedGuard = false
+
+    local function interceptDataChangedEvent()
+        if typeof(DataChanged) ~= "Instance" or not DataChanged:IsA("RemoteEvent") then
+            return
+        end
+
+        if type(getconnections) == "function" and type(hookfunction) == "function" then
+            for _, connection in ipairs(getconnections(DataChanged.OnClientEvent) or {}) do
+                if connection and connection.Function then
+                    local old = connection.Function
+                    hookfunction(old, function(...)
+                        if handleDataChanged then
+                            local ok, err = pcall(handleDataChanged, ...)
+                            if not ok then
+                                warn("DataChanged intercept failed:", err)
+                            end
+                        end
+                        return old(...)
+                    end)
+                end
+            end
+        end
+    end
+
+    interceptDataChangedEvent()
 
     local dirtyPetState = setmetatable({}, {__mode = "k"})
     local sleepyPetState = setmetatable({}, {__mode = "k"})
@@ -420,16 +447,23 @@ function UI.Init(Pets, Sleep, Care, Remotes)
     end
 
     if DataChanged and DataChanged:IsA("RemoteEvent") then
-        DataChanged.OnClientEvent:Connect(function(playerName, dataType, data, timestamp)
+        handleDataChanged = function(playerName, dataType, data, timestamp)
+            if handleDataChangedGuard then
+                return
+            end
+            handleDataChangedGuard = true
             if dataType ~= "ailments_manager" then
+                handleDataChangedGuard = false
                 return
             end
             if type(data) ~= "table" then
+                handleDataChangedGuard = false
                 return
             end
 
             local ailments = data.ailments
             if type(ailments) ~= "table" then
+                handleDataChangedGuard = false
                 return
             end
 
@@ -529,6 +563,13 @@ function UI.Init(Pets, Sleep, Care, Remotes)
                         end
                     end
                 end
+            end
+            handleDataChangedGuard = false
+        end
+
+        DataChanged.OnClientEvent:Connect(function(...)
+            if handleDataChanged then
+                pcall(handleDataChanged, ...)
             end
         end)
     end
