@@ -435,12 +435,41 @@ function UI.Init(Pets, Sleep, Care, Remotes)
                     end
                     PetAilmentCache[tostring(petId)] = normalized
 
-                    local selected = resolveSelectedPet()
-                    if selected then
-                        local currentId = resolvePetId(selected)
-                        if tostring(currentId) == tostring(petId) then
+                    -- try to resolve the pet model from the petId
+                    local petModel = nil
+                    for _, p in ipairs(Pets.GetPets()) do
+                        local id = resolvePetId(p)
+                        if id and tostring(id) == tostring(petId) then
+                            petModel = p
+                            break
+                        end
+                    end
+
+                    -- mark ailments on the pet model so other detection logic stays in sync
+                    if petModel then
+                        local hasDirty = normalized["dirty"] or normalized["stinky"] or normalized["stink"]
+                        local hasSleepy = normalized["sleepy"]
+                        local hasToilet = normalized["toilet"]
+
+                        markPetDirty(petModel, hasDirty and true or false)
+                        markPetSleepy(petModel, hasSleepy and true or false)
+                        markPetToilet(petModel, hasToilet and true or false)
+
+                        -- if this is the selected pet, refresh status and possibly queue autofarm
+                        local selected = resolveSelectedPet()
+                        if selected and selected == petModel then
                             refreshSelectedPetStatus()
                             if autofarmEnabled then
+                                if hasToilet then
+                                    queueAutofarmTask("toilet", petModel)
+                                end
+                                if hasDirty then
+                                    queueAutofarmTask("shower", petModel)
+                                end
+                                if hasSleepy then
+                                    queueAutofarmTask("sleep", petModel)
+                                end
+                                -- also throttle a full autofarm run to avoid rapid repeats
                                 local last = dataChangedAutofarmThrottle[selected]
                                 if not last or (time() - last) > 2 then
                                     dataChangedAutofarmThrottle[selected] = time()
@@ -450,6 +479,27 @@ function UI.Init(Pets, Sleep, Care, Remotes)
                                             warn("AUTOFARM DATACHANGE ERROR", err)
                                         end
                                     end)
+                                end
+                            end
+                        end
+                    else
+                        -- fallback: if selected pet matches id, still refresh label
+                        local selected = resolveSelectedPet()
+                        if selected then
+                            local currentId = resolvePetId(selected)
+                            if tostring(currentId) == tostring(petId) then
+                                refreshSelectedPetStatus()
+                                if autofarmEnabled then
+                                    local last = dataChangedAutofarmThrottle[selected]
+                                    if not last or (time() - last) > 2 then
+                                        dataChangedAutofarmThrottle[selected] = time()
+                                        task.spawn(function()
+                                            local ok, err = pcall(runAutofarmOnce)
+                                            if not ok then
+                                                warn("AUTOFARM DATACHANGE ERROR", err)
+                                            end
+                                        end)
+                                    end
                                 end
                             end
                         end
