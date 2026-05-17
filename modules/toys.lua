@@ -1,15 +1,141 @@
---// Fixed toy ID + equip / play / throw / walk
+--// Toys by name (unique id from equip_manager / backpack / nil instances)
 
 local Toys = {}
 
--- Your squeaky bone (change here if the unique id changes)
-Toys.TOY_ID = "2_1a3aae15c72c4430bd9824c5e6def466"
+Toys.TOY_NAME_PATTERNS = {
+    "squeaky",
+    "squeaky_bone",
+    "squeaky_bone_default",
+    "SqueakyToyTool",
+}
+
+local cachedUniqueId = nil
+local equipToys = {}
 
 local THROW_COUNT = 3
 local THROW_COOLDOWN = 5
 
-function Toys.getToyId()
-    return Toys.TOY_ID
+local function lower(s)
+    return tostring(s or ""):lower()
+end
+
+local function nameMatches(str)
+    local text = lower(str)
+    for _, pattern in ipairs(Toys.TOY_NAME_PATTERNS) do
+        if text:find(lower(pattern), 1, true) then
+            return true
+        end
+    end
+    return false
+end
+
+local function toyEntryMatches(entry)
+    if type(entry) ~= "table" then
+        return false
+    end
+    if nameMatches(entry.kind) or nameMatches(entry.id) then
+        return true
+    end
+    if entry.properties and nameMatches(entry.properties.kind) then
+        return true
+    end
+    return false
+end
+
+local function getNilInstances()
+    if typeof(getnilinstances) == "function" then
+        return getnilinstances
+    end
+    local g = getgenv and getgenv() or _G
+    if g and typeof(g.getnilinstances) == "function" then
+        return g.getnilinstances
+    end
+    return nil
+end
+
+function Toys.parseEquipManager(data)
+    equipToys = {}
+    if type(data) ~= "table" or type(data.toys) ~= "table" then
+        return
+    end
+    for _, toy in pairs(data.toys) do
+        if type(toy) == "table" and toy.unique then
+            table.insert(equipToys, toy)
+            if toyEntryMatches(toy) then
+                cachedUniqueId = tostring(toy.unique)
+            end
+        end
+    end
+end
+
+local function uidFromTool(tool)
+    if not tool or not tool:IsA("Tool") then
+        return nil
+    end
+    if not nameMatches(tool.Name) then
+        return nil
+    end
+    local uid = tool:GetAttribute("unique")
+        or tool:GetAttribute("UniqueId")
+        or tool:GetAttribute("item_unique")
+    if uid then
+        return tostring(uid)
+    end
+    return nil
+end
+
+local function scanContainers(player)
+    if not player then
+        return nil
+    end
+    local list = {}
+    if player:FindFirstChildOfClass("Backpack") then
+        table.insert(list, player.Backpack)
+    end
+    if player.Character then
+        table.insert(list, player.Character)
+    end
+    for _, container in ipairs(list) do
+        for _, child in ipairs(container:GetChildren()) do
+            local uid = uidFromTool(child)
+            if uid then
+                cachedUniqueId = uid
+                return uid
+            end
+        end
+    end
+    local nilFn = getNilInstances()
+    if nilFn then
+        for _, inst in ipairs(nilFn()) do
+            local uid = uidFromTool(inst)
+            if uid then
+                cachedUniqueId = uid
+                return uid
+            end
+        end
+    end
+    return nil
+end
+
+function Toys.findToyByName(player)
+    if cachedUniqueId then
+        return cachedUniqueId
+    end
+    for _, toy in ipairs(equipToys) do
+        if toyEntryMatches(toy) and toy.unique then
+            cachedUniqueId = tostring(toy.unique)
+            return cachedUniqueId
+        end
+    end
+    return scanContainers(player)
+end
+
+function Toys.getToyId(player)
+    return Toys.findToyByName(player) or ""
+end
+
+function Toys.getToyDisplayName()
+    return Toys.TOY_NAME_PATTERNS[1] or "squeaky"
 end
 
 function Toys.equip(Remotes, uniqueId)
@@ -52,9 +178,7 @@ function Toys.throwToy(Remotes, uniqueId)
     end)
 end
 
--- Cobalt throw: equip → ThrowToyReaction → unequip (from_throw_toy)
 function Toys.throwOnce(Remotes, uniqueId)
-    uniqueId = uniqueId or Toys.TOY_ID
     Toys.equip(Remotes, uniqueId)
     task.wait(0.35)
     Toys.throwToy(Remotes, uniqueId)
@@ -62,9 +186,7 @@ function Toys.throwOnce(Remotes, uniqueId)
     Toys.unequip(Remotes, uniqueId, true)
 end
 
--- 3 throws, 5 seconds between each (when play need is active)
 function Toys.throwThreeTimes(Remotes, uniqueId, stillNeedsFn)
-    uniqueId = uniqueId or Toys.TOY_ID
     for i = 1, THROW_COUNT do
         if stillNeedsFn and not stillNeedsFn() then
             break
@@ -79,9 +201,7 @@ function Toys.throwThreeTimes(Remotes, uniqueId, stillNeedsFn)
     return true
 end
 
--- Cobalt play: equip → START → hold until need clears → END → unequip
 function Toys.playUntilDone(Remotes, uniqueId, stillNeedsFn)
-    uniqueId = uniqueId or Toys.TOY_ID
     Toys.equip(Remotes, uniqueId)
     task.wait(0.35)
     Toys.useStart(Remotes, uniqueId)
@@ -102,7 +222,6 @@ local WALK_KEYS = {
     Enum.KeyCode.D,
 }
 
--- Short taps so movement steers around walls instead of MoveTo into them
 local KEY_HOLD = 0.16
 local KEY_GAP = 0.03
 local BURST_COUNT = 8
@@ -127,7 +246,6 @@ local function tapKey(keyCode)
 end
 
 local function nextWalkKey()
-    -- Favor forward + strafe so we circle obstacles instead of ramming walls
     local roll = math.random(1, 10)
     if roll <= 5 then
         return Enum.KeyCode.W
