@@ -1,9 +1,8 @@
---// Status Module
---// Handles status display and updates
+--// Status display — reads only from PetState
 
 local Status = {}
 
-function Status.Init(Detection)
+function Status.Init(PetState)
     local StatusLabel = nil
     local PetStatusLabel = nil
 
@@ -19,23 +18,26 @@ function Status.Init(Detection)
         end
 
         local statuses = {}
-        if Detection.isSleeping(pet) then
-            table.insert(statuses, "Sleeping")
-        end
-        if Detection.isDirty(pet) then
+        if PetState.isDirty(pet) then
             table.insert(statuses, "Dirty")
         end
-        if Detection.isSleepy(pet) then
+        if PetState.isSleepy(pet) then
             table.insert(statuses, "Sleepy")
         end
-        if Detection.isHungry(pet) then
+        if PetState.isHungry(pet) then
             table.insert(statuses, "Hungry")
         end
-        if Detection.isThirsty(pet) then
+        if PetState.isThirsty(pet) then
             table.insert(statuses, "Thirsty")
         end
-        if Detection.isToilet(pet) then
+        if PetState.isToilet(pet) then
             table.insert(statuses, "Needs toilet")
+        end
+        if PetState.isSchool(pet) then
+            table.insert(statuses, "School")
+        end
+        if PetState.isPetMe(pet) then
+            table.insert(statuses, "Wants attention")
         end
 
         if #statuses == 0 then

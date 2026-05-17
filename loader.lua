@@ -3,7 +3,7 @@ local BASE = "https://raw.githubusercontent.com/AsarjaStuff/Script/main/modules/
 local function load(name)
     print("loading", name)
 
-    local src = game:HttpGet(BASE..name..".lua")
+    local src = game:HttpGet(BASE .. name .. ".lua")
     local fn = loadstring(src)
 
     if not fn then
@@ -25,12 +25,15 @@ local Remotes = load("remote")
 local Pets = load("pets")
 local Sleep = load("sleep")
 local Care = load("care")
+local PetStatesModule = load("Core/PetStates")
 local UI = load("ui")
 
 print("INIT UI")
 
+local PetState = PetStatesModule and PetStatesModule.Init and PetStatesModule.Init() or nil
+
 if UI and UI.Init then
-    UI.Init(Pets, Sleep, Care, Remotes)
+    UI.Init(Pets, Sleep, Care, Remotes, PetState)
 else
     warn("UI missing Init")
 end

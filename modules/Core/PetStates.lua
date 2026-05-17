@@ -1,7 +1,14 @@
---// Pet States Module
---// Manages pet state caching and updates
+--// Single source of truth for pet needs (ailments_manager → kind)
 
 local PetStates = {}
+
+local CARE_NEEDS = {
+    "sleepy",
+    "dirty",
+    "hungry",
+    "thirsty",
+    "toilet",
+}
 
 local TRACKED_AILMENTS = {
     "sleepy",
@@ -14,145 +21,199 @@ local TRACKED_AILMENTS = {
 }
 
 function PetStates.Init()
-    local PetAilmentCache = {}
-    local PetState = setmetatable({}, {__mode = "k"})
-    local dirtyPetState = setmetatable({}, {__mode = "k"})
-    local sleepyPetState = setmetatable({}, {__mode = "k"})
+    local PetStateById = {}
+    local listeners = {}
 
-    local function updatePetState(pet, data)
-        if not pet or type(data) ~= "table" then
-            return
+    local function emptyNeeds()
+        local needs = {}
+        for _, name in ipairs(TRACKED_AILMENTS) do
+            needs[name] = false
         end
-        local state = PetState[pet]
-        if not state then
-            state = {}
-            PetState[pet] = state
-        end
-        for key, value in pairs(data) do
-            state[key] = value
+        return needs
+    end
+
+    local function notifyListeners()
+        for _, callback in ipairs(listeners) do
+            task.spawn(callback)
         end
     end
 
-    local function addAilmentKey(normalized, key)
-        if not key then
-            return
+    local function resolvePetId(pet)
+        if not pet or not pet:IsA("Model") then
+            return nil
         end
-        local lower = tostring(key):lower()
-        if lower ~= "" then
-            normalized[lower] = true
-        end
+        return tostring(pet:GetAttribute("unique") or pet:GetAttribute("id") or pet.Name)
     end
 
-    local function ingestAilmentEntry(normalized, ailmentName, ailmentData)
-        addAilmentKey(normalized, ailmentName)
-        if type(ailmentData) ~= "table" then
-            return
+    local function petIdCandidates(pet)
+        local candidates = {}
+        local seen = {}
+        local function add(value)
+            if value == nil then
+                return
+            end
+            local key = tostring(value)
+            if key ~= "" and not seen[key] then
+                seen[key] = true
+                table.insert(candidates, key)
+            end
         end
-        addAilmentKey(normalized, ailmentData.kind)
-        addAilmentKey(normalized, ailmentData.ailment_key)
-        addAilmentKey(normalized, ailmentData.ailment_name)
-        if type(ailmentData.components) == "table" then
-            for subName, subData in pairs(ailmentData.components) do
-                addAilmentKey(normalized, subName)
-                if type(subData) == "table" then
-                    addAilmentKey(normalized, subData.kind)
-                    addAilmentKey(normalized, subData.ailment_key)
+        add(pet:GetAttribute("unique"))
+        add(pet:GetAttribute("id"))
+        add(pet.Name)
+        return candidates
+    end
+
+    local function findStateId(pet)
+        if not pet then
+            return nil
+        end
+        for _, candidate in ipairs(petIdCandidates(pet)) do
+            if PetStateById[candidate] then
+                return candidate
+            end
+        end
+        for stateId in pairs(PetStateById) do
+            local stateKey = tostring(stateId)
+            for _, candidate in ipairs(petIdCandidates(pet)) do
+                if stateKey == candidate then
+                    return stateKey
                 end
             end
         end
+        return nil
     end
 
-    local function markPetDirty(pet, value)
-        if pet and pet:IsA("Model") then
-            dirtyPetState[pet] = value
-            local petId = tostring(pet:GetAttribute("unique") or pet:GetAttribute("id") or pet.Name)
-            if petId then
-                local cache = PetAilmentCache[petId]
-                if value then
-                    cache = cache or {}
-                    cache.dirty = true
-                    PetAilmentCache[petId] = cache
-                elseif cache then
-                    cache.dirty = nil
-                end
-            end
+    local function getState(pet)
+        local stateId = findStateId(pet)
+        if not stateId then
+            return nil, nil
         end
+        return PetStateById[stateId], stateId
     end
 
-    local function markPetSleepy(pet, value)
-        if pet and pet:IsA("Model") then
-            sleepyPetState[pet] = value
-            local petId = tostring(pet:GetAttribute("unique") or pet:GetAttribute("id") or pet.Name)
-            if petId then
-                local cache = PetAilmentCache[petId]
-                if value then
-                    cache = cache or {}
-                    cache.sleepy = true
-                    PetAilmentCache[petId] = cache
-                elseif cache then
-                    cache.sleepy = nil
-                end
-            end
+    local function hasNeed(pet, needName)
+        local state = getState(pet)
+        if not state or not state.needs then
+            return false
         end
+        return state.needs[tostring(needName):lower()] == true
     end
 
-    local function markPetToilet(pet, value)
-        if pet and pet:IsA("Model") then
-            local petId = tostring(pet:GetAttribute("unique") or pet:GetAttribute("id") or pet.Name)
-            if petId then
-                local cache = PetAilmentCache[petId]
-                if value then
-                    cache = cache or {}
-                    cache.toilet = true
-                    PetAilmentCache[petId] = cache
-                elseif cache then
-                    cache.toilet = nil
-                end
-            end
-        end
-    end
-
-    local function updateAilmentCache(petId, ailmentTable)
-        if type(ailmentTable) ~= "table" then
-            return {}
-        end
-        local normalized = {}
-        for ailmentName, ailmentData in pairs(ailmentTable) do
-            ingestAilmentEntry(normalized, ailmentName, ailmentData)
-            if type(ailmentData) == "table" and ailmentData.kind then
-                print("PET:", petId, "AILMENT kind=", ailmentData.kind)
-            else
-                print("PET:", petId, "AILMENT:", ailmentName)
-            end
-        end
-        PetAilmentCache[tostring(petId)] = normalized
-        return normalized
-    end
-
-    local function syncFromAilmentsManager(data)
+    local function parseAilmentsManager(data)
         if type(data) ~= "table" or type(data.ailments) ~= "table" then
             return
         end
+
+        for key in pairs(PetStateById) do
+            PetStateById[key] = nil
+        end
+
         for petId, ailmentTable in pairs(data.ailments) do
-            updateAilmentCache(petId, ailmentTable)
+            if type(ailmentTable) == "table" then
+                local needs = emptyNeeds()
+                local rawKinds = {}
+
+                for _, ailment in pairs(ailmentTable) do
+                    if type(ailment) == "table" and ailment.kind then
+                        local kind = tostring(ailment.kind):lower()
+                        rawKinds[kind] = true
+                        if needs[kind] ~= nil then
+                            needs[kind] = true
+                        end
+                        print("PET:", petId, "kind=", kind)
+                    end
+                end
+
+                PetStateById[tostring(petId)] = {
+                    needs = needs,
+                    rawKinds = rawKinds,
+                    updatedAt = os.clock(),
+                }
+            end
+        end
+
+        notifyListeners()
+    end
+
+    local function subscribe(callback)
+        if type(callback) == "function" then
+            table.insert(listeners, callback)
         end
     end
 
-    return {
-        PetAilmentCache = PetAilmentCache,
-        PetState = PetState,
-        dirtyPetState = dirtyPetState,
-        sleepyPetState = sleepyPetState,
+    local function getNeeds(pet)
+        local state = getState(pet)
+        return state and state.needs or nil
+    end
+
+    local function getRawKinds(pet)
+        local state = getState(pet)
+        return state and state.rawKinds or nil
+    end
+
+    local function debugPetNeeds(pet, source)
+        if not pet then
+            print("[PET NEEDS DEBUG]", source or "?", "no pet")
+            return
+        end
+        local state, stateId = getState(pet)
+        if not state then
+            print(
+                "[PET NEEDS DEBUG]",
+                source or "?",
+                "pet=" .. pet.Name,
+                "resolveId=" .. tostring(resolvePetId(pet)),
+                "stateId=nil (no ailments_manager data yet)"
+            )
+            return
+        end
+        local rawParts = {}
+        for kind in pairs(state.rawKinds or {}) do
+            table.insert(rawParts, kind)
+        end
+        table.sort(rawParts)
+        local needParts = {}
+        for _, name in ipairs(TRACKED_AILMENTS) do
+            table.insert(needParts, name .. "=" .. tostring(state.needs[name]))
+        end
+        print(
+            "[PET NEEDS DEBUG]",
+            source or "?",
+            "pet=" .. pet.Name,
+            "resolveId=" .. tostring(resolvePetId(pet)),
+            "stateId=" .. tostring(stateId),
+            "| raw kinds:", #rawParts == 0 and "(none)" or table.concat(rawParts, ", "),
+            "| " .. table.concat(needParts, " ")
+        )
+    end
+
+    local api = {
+        CARE_NEEDS = CARE_NEEDS,
         TRACKED_AILMENTS = TRACKED_AILMENTS,
-        updatePetState = updatePetState,
-        addAilmentKey = addAilmentKey,
-        ingestAilmentEntry = ingestAilmentEntry,
-        markPetDirty = markPetDirty,
-        markPetSleepy = markPetSleepy,
-        markPetToilet = markPetToilet,
-        updateAilmentCache = updateAilmentCache,
-        syncFromAilmentsManager = syncFromAilmentsManager,
+        PetStateById = PetStateById,
+        parseAilmentsManager = parseAilmentsManager,
+        subscribe = subscribe,
+        getState = getState,
+        getNeeds = getNeeds,
+        getRawKinds = getRawKinds,
+        hasNeed = hasNeed,
+        resolvePetId = resolvePetId,
+        findStateId = findStateId,
+        debugPetNeeds = debugPetNeeds,
+        isDirty = function(pet) return hasNeed(pet, "dirty") end,
+        isSleepy = function(pet) return hasNeed(pet, "sleepy") end,
+        isHungry = function(pet) return hasNeed(pet, "hungry") end,
+        isThirsty = function(pet) return hasNeed(pet, "thirsty") end,
+        isToilet = function(pet) return hasNeed(pet, "toilet") end,
+        isSchool = function(pet) return hasNeed(pet, "school") end,
+        isPetMe = function(pet) return hasNeed(pet, "pet_me") end,
+        isSleeping = function()
+            return false
+        end,
     }
+
+    return api
 end
 
 return PetStates
