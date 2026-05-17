@@ -10,6 +10,8 @@ local TRACKED_AILMENTS = {
     "toilet",
     "school",
     "pet_me",
+    "play",
+    "walk",
 }
 
 local NEED_ALIASES = {
@@ -19,7 +21,9 @@ local NEED_ALIASES = {
     thirsty = {"thirsty", "thirst", "needsdrink", "needs_drink", "drink", "hydration"},
     toilet = {"toilet", "pee", "poop", "restroom"},
     school = {"school"},
-    pet_me = {"pet_me", "petme", "pet"},
+    pet_me = {"pet_me", "petme", "pet", "play", "squeaky_bone_default"},
+    play = {"play", "pet_me", "squeaky_bone_default", "squeaky"},
+    walk = {"walk", "walking", "go_walk"},
 }
 
 function PetStates.Init()
@@ -155,8 +159,43 @@ function PetStates.Init()
         isThirsty = function(p) return hasNeed(p, "thirsty") end,
         isToilet = function(p) return hasNeed(p, "toilet") end,
         isSchool = function(p) return hasNeed(p, "school") end,
-        isPetMe = function(p) return hasNeed(p, "pet_me") end,
+        isPetMe = function(p) return hasNeed(p, "pet_me") or hasNeed(p, "play") end,
+        isPlay = function(p) return hasNeed(p, "play") or hasNeed(p, "pet_me") end,
+        isWalk = function(p) return hasNeed(p, "walk") end,
         isSleeping = function() return false end,
+        getAilmentKind = function(pet)
+            local state = getState(pet)
+            if not state or not state.active then
+                return nil
+            end
+            local active = state.active
+            for _, kind in ipairs({
+                "squeaky_bone_default",
+                "play",
+                "walk",
+                "pet_me",
+            }) do
+                if active[kind] then
+                    return kind
+                end
+            end
+            return nil
+        end,
+        needsPlayToy = function(pet)
+            local state = getState(pet)
+            if state and state.active then
+                if state.active["squeaky_bone_default"] then
+                    return true, "squeaky_bone_default"
+                end
+                if state.active["play"] then
+                    return true, "play"
+                end
+            end
+            if hasNeed(pet, "play") or hasNeed(pet, "pet_me") then
+                return true, "play"
+            end
+            return false, nil
+        end,
     }
 end
 
