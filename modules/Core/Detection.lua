@@ -109,22 +109,18 @@ function Detection.Init(PetAilmentCache, PetState)
     end
 
     local function isHungry(pet)
-        local petId = pet:IsA("Model") and tostring(pet:GetAttribute("unique") or pet:GetAttribute("id") or pet.Name) or nil
-        if petHasAilment(pet, "hungry", petId) or petHasAilment(pet, "starving", petId) or petHasAilment(pet, "feed", petId) or petHasAilment(pet, "needsfood", petId) then
-            return true
-        end
-        local state = getPetState(pet)
-        if not state then
+        if not pet or not pet:IsA("Model") then
             return false
         end
-        if stateHasAny(pet, {"Hungry", "Starving", "NeedsFood", "Feed"}) then
-            return true
-        end
-        if stateHasEffect(pet, {"hungry", "starving", "feed"}) then
-            return true
-        end
-        return false
-    end
+
+         local petId = tostring(
+         pet:GetAttribute("unique")
+         or pet:GetAttribute("id")
+         or pet.Name
+    )
+
+    return petHasAilment(pet, "hungry", petId)
+end
 
     local function isSleeping(pet)
         if stateHasAny(pet, {"sleeping", "Sleeping", "Asleep", "asleep", "Sleep", "FallAsleep", "FocusPet", "SleepLoop"}) then
@@ -152,17 +148,17 @@ function Detection.Init(PetAilmentCache, PetState)
     end
 
     local function isThirsty(pet)
-        local petId = pet:IsA("Model") and tostring(pet:GetAttribute("unique") or pet:GetAttribute("id") or pet.Name) or nil
-        if petHasAilment(pet, "thirsty", petId) or petHasAilment(pet, "needsdrink", petId) or petHasAilment(pet, "drink", petId) or petHasAilment(pet, "thirst", petId) then
-            return true
+        if not pet or not pet:IsA("Model") then
+            return false
         end
-        if stateHasAny(pet, {"Thirsty", "Parched", "NeedsDrink", "Drink", "Thirst"}) then
-            return true
-        end
-        if stateHasEffect(pet, {"thirsty"}) then
-            return true
-        end
-        return false
+
+        local petId = tostring(
+            pet:GetAttribute("unique")
+            or pet:GetAttribute("id")
+            or pet.Name
+        )
+
+        return petHasAilment(pet, "thirsty", petId)
     end
 
     return {
