@@ -36,14 +36,14 @@ local function loadModule(paths)
     return nil
 end
 
-print("INIT UI — loader v9")
+print("INIT UI — loader v10")
 
 local Remotes = loadModule({"remote"})
 local Pets = loadModule({"pets"})
 local Sleep = loadModule({"sleep"})
 local Care = loadModule({"care"})
 local Toys = loadModule({"toys"})
-local FurnitureHub = loadModule({"furniture_hub"})
+local Requirements = loadModule({"requirements"})
 
 -- Try flat path first, then Core/ subfolder
 local PetStatesModule = loadModule({"PetStates", "Core/PetStates"})
@@ -68,7 +68,7 @@ end
 
 if type(UI) == "table" and type(UI.Init) == "function" then
     local ok, err = pcall(function()
-        UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, FurnitureHub)
+        UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
     end)
     if ok then
         print("UI.Init OK")

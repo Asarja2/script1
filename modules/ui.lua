@@ -49,7 +49,7 @@ local function formatNeed(name, active)
     return "○  " .. title .. "  ·  clear"
 end
 
-function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, FurnitureHub)
+function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
     if not Rayfield then
         warn("[ui] No Rayfield")
         return
@@ -73,21 +73,21 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, FurnitureHub)
         walkWithPet = function() end,
     }
 
-    FurnitureHub = FurnitureHub or {
-        cacheAll = function() end,
-        isLocked = function()
-            return false
+    Requirements = Requirements or {
+        scan = function()
+            return {results = {}, missing = {}, readyCount = 0, total = 0}
         end,
-        clearLock = function() end,
-        use = function()
-            return false
+        canHandleNeed = function()
+            return true
         end,
-        startFollow = function() end,
-        stopFollow = function() end,
-        refresh = function() end,
+        getSummaryText = function()
+            return "Status: unavailable", COLOR_WARN
+        end,
+        formatRow = formatNeed,
+        ITEMS = {},
     }
 
-    print("[ui] Init v9 — locked home furniture")
+    print("[ui] Init v10 — TP care + requirements tab")
 
     local player = game:GetService("Players").LocalPlayer
     local HoldBaby = Remotes.HoldBaby
@@ -113,13 +113,67 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, FurnitureHub)
         return nil
     end
 
-    local function useNeed(needType, pet)
+    local function resolveCFrame(target, partName)
+        if not target then
+            return nil
+        end
+        if target:IsA("BasePart") then
+            return target.CFrame
+        end
+        local named = target:FindFirstChild(partName)
+        if named and named:IsA("BasePart") then
+            return named.CFrame
+        end
+        if target.PrimaryPart then
+            return target.PrimaryPart.CFrame
+        end
+        local bp = target:FindFirstChildOfClass("BasePart")
+        return bp and bp.CFrame
+    end
+
+    local function useFurniture(needType, pet)
         pet = pet or getPet()
         if not pet then
             return false
         end
-        FurnitureHub.refresh(player)
-        return FurnitureHub.use(needType, player, pet, ActivateFurniture)
+
+        local id, target, partName
+        if needType == "food" then
+            id, target = Care.FindFood()
+            partName = "UseBlock"
+        elseif needType == "drink" then
+            id, target = Care.FindDrink()
+            partName = "UseBlock"
+        elseif needType == "shower" then
+            id, target = Care.FindShower()
+            partName = "UseBlock"
+        elseif needType == "toilet" then
+            id, target = Care.FindToilet()
+            partName = "Seat1"
+        elseif needType == "bed" then
+            id, target = Sleep.FindBed()
+            partName = "Seat1"
+        else
+            return false
+        end
+
+        if not id or not target then
+            return false
+        end
+
+        local cf = resolveCFrame(target, partName)
+        if not cf then
+            return false
+        end
+
+        local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+        if root then
+            root.CFrame = cf * CFrame.new(0, 0, -5)
+        end
+
+        return pcall(function()
+            ActivateFurniture:InvokeServer(player, id, partName, {cframe = cf}, pet)
+        end)
     end
 
     local function getToyId()
@@ -131,7 +185,7 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, FurnitureHub)
 
     local function refreshToyLabel()
         local uid = getToyId()
-        local name = (Toys.getToyDisplayName and Toys.getToyDisplayName()) or "squeaky"
+        local name = (Toys.getToyDisplayName and Toys.getToyDisplayName()) or "squeaky_bone_default"
         if uid ~= "" then
             setLabel(ToyIdLabel, "Toy: " .. name .. "  (resolved)", COLOR_DIM)
         else
@@ -166,7 +220,7 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, FurnitureHub)
         Name = "Pet Controller",
         Icon = 0,
         LoadingTitle = "Pet Controller",
-        LoadingSubtitle = "v9",
+        LoadingSubtitle = "v10",
         Theme = "Default",
         ToggleUIKeybind = Enum.KeyCode.F2,
         ConfigurationSaving = {Enabled = true, FolderName = "PetController", FileName = "config"},
@@ -174,10 +228,11 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, FurnitureHub)
 
     local ControlsTab = Window:CreateTab("Controls", 0)
     local NeedsTab = Window:CreateTab("Pet Needs", 0)
+    local ReqTab = Window:CreateTab("Requirements", 0)
 
     ControlsTab:CreateSection("Status")
     local StatusLabel = ControlsTab:CreateLabel("Status: Ready")
-    local ToyIdLabel = ControlsTab:CreateLabel("Toy: squeaky")
+    local ToyIdLabel = ControlsTab:CreateLabel("Toy: squeaky_bone_default")
 
     local function setStatus(t)
         setLabel(StatusLabel, "Status: " .. t, COLOR_DIM)
@@ -193,6 +248,36 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, FurnitureHub)
         ailLabels[n] = NeedsTab:CreateLabel(formatNeed(n, false))
     end
     local RawLabel = NeedsTab:CreateLabel("Signals: waiting")
+
+    ReqTab:CreateSection("Autofarm Setup")
+    local ReqSummaryLabel = ReqTab:CreateLabel("Status: not scanned")
+    local reqLabels = {}
+    for _, item in ipairs(Requirements.ITEMS or {}) do
+        reqLabels[item.key] = ReqTab:CreateLabel(Requirements.formatRow(item.label, false))
+    end
+
+    local function refreshRequirements()
+        local scan = Requirements.scan(Care, Sleep, Toys, player)
+        local summary, summaryColor = Requirements.getSummaryText()
+        setLabel(ReqSummaryLabel, summary, summaryColor)
+        for _, item in ipairs(Requirements.ITEMS or {}) do
+            local row = scan.results[item.key]
+            local ready = row and row.found
+            setLabel(
+                reqLabels[item.key],
+                Requirements.formatRow(item.label, ready),
+                ready and COLOR_ACTIVE or COLOR_INACTIVE
+            )
+        end
+    end
+
+    ReqTab:CreateButton({
+        Name = "Scan House",
+        Callback = function()
+            refreshRequirements()
+            setStatus("Requirements scanned")
+        end,
+    })
 
     local function refreshAilments()
         local pet = getPet()
@@ -304,28 +389,48 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, FurnitureHub)
         refreshAilments()
 
         if PetState.isHungry(pet) then
-            setStatus("Feeding (near you)")
-            useNeed("food", pet)
+            if not Requirements.canHandleNeed("hungry") then
+                setStatus("Missing: Food Bowl")
+                return
+            end
+            setStatus("Feeding")
+            useFurniture("food", pet)
             return
         end
         if PetState.isThirsty(pet) then
-            setStatus("Drinking (near you)")
-            useNeed("drink", pet)
+            if not Requirements.canHandleNeed("thirsty") then
+                setStatus("Missing: Water Bowl")
+                return
+            end
+            setStatus("Drinking")
+            useFurniture("drink", pet)
             return
         end
         if PetState.isToilet(pet) then
-            setStatus("Toilet (near you)")
-            useNeed("toilet", pet)
+            if not Requirements.canHandleNeed("toilet") then
+                setStatus("Missing: Toilet")
+                return
+            end
+            setStatus("Toilet")
+            useFurniture("toilet", pet)
             return
         end
         if PetState.isDirty(pet) then
-            setStatus("Shower (near you)")
-            useNeed("shower", pet)
+            if not Requirements.canHandleNeed("dirty") then
+                setStatus("Missing: Shower")
+                return
+            end
+            setStatus("Shower")
+            useFurniture("shower", pet)
             return
         end
         if PetState.isSleepy(pet) then
-            setStatus("Sleep (near you)")
-            useNeed("bed", pet)
+            if not Requirements.canHandleNeed("sleepy") then
+                setStatus("Missing: Pet Bed")
+                return
+            end
+            setStatus("Sleep")
+            useFurniture("bed", pet)
             return
         end
         if stillWalk(pet) then
@@ -335,6 +440,10 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, FurnitureHub)
             return
         end
         if stillPlay(pet) then
+            if not Requirements.canHandleNeed("play") then
+                setStatus("Missing: squeaky_bone_default")
+                return
+            end
             runAction(function()
                 doThrow(pet)
             end)
@@ -413,7 +522,7 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, FurnitureHub)
             if not p then
                 return
             end
-            useNeed("food", p)
+            useFurniture("food", p)
         end,
     })
     ControlsTab:CreateButton({
@@ -423,7 +532,7 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, FurnitureHub)
             if not p then
                 return
             end
-            useNeed("drink", p)
+            useFurniture("drink", p)
         end,
     })
     ControlsTab:CreateButton({
@@ -433,7 +542,7 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, FurnitureHub)
             if not p then
                 return
             end
-            useNeed("shower", p)
+            useFurniture("shower", p)
         end,
     })
     ControlsTab:CreateButton({
@@ -443,7 +552,7 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, FurnitureHub)
             if not p then
                 return
             end
-            useNeed("toilet", p)
+            useFurniture("toilet", p)
         end,
     })
     ControlsTab:CreateButton({
@@ -453,7 +562,7 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, FurnitureHub)
             if not p then
                 return
             end
-            useNeed("bed", p)
+            useFurniture("bed", p)
         end,
     })
 
@@ -488,27 +597,22 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, FurnitureHub)
         Callback = function(on)
             autofarmEnabled = on
             if on then
-                if not FurnitureHub.isLocked or not FurnitureHub.isLocked() then
-                    FurnitureHub.cacheAll(Care, Sleep)
+                refreshRequirements()
+                local ok, missing = Requirements.allCareReady()
+                if not ok and missing and #missing > 0 then
+                    setStatus("Missing: " .. table.concat(missing, ", "))
                 end
-                if FurnitureHub.isLocked and FurnitureHub.isLocked() then
-                    FurnitureHub.startFollow(player)
-                    if not autofarmLoop then
-                        autofarmLoop = task.spawn(function()
-                            while autofarmEnabled do
-                                pcall(autofarm)
-                                task.wait(actionBusy and 2 or 4)
-                            end
-                            autofarmLoop = nil
-                        end)
-                    end
-                    setStatus("Autofarm ON — home stations follow you")
-                else
-                    setStatus("Stand in your house first, then enable autofarm")
-                    autofarmEnabled = false
+                if not autofarmLoop then
+                    autofarmLoop = task.spawn(function()
+                        while autofarmEnabled do
+                            pcall(autofarm)
+                            task.wait(actionBusy and 2 or 4)
+                        end
+                        autofarmLoop = nil
+                    end)
                 end
+                setStatus("Autofarm ON")
             else
-                FurnitureHub.stopFollow()
                 setStatus("Autofarm OFF")
             end
         end,
@@ -525,26 +629,14 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, FurnitureHub)
         PetDropdown:Set({o[1]})
     end
 
-    ControlsTab:CreateButton({
-        Name = "Lock Home Furniture",
-        Callback = function()
-            FurnitureHub.clearLock()
-            FurnitureHub.cacheAll(Care, Sleep, true)
-            if FurnitureHub.isLocked and FurnitureHub.isLocked() then
-                setStatus("Home furniture locked — will follow you")
-            else
-                setStatus("Could not find furniture — stand in your house")
-            end
-        end,
-    })
-
+    refreshRequirements()
     refreshToyLabel()
     refreshAilments()
     Rayfield:LoadConfiguration()
     pcall(function()
         Rayfield:Notify({
-            Title = "Loaded v9",
-            Content = "Lock home furniture once, then autofarm. Stations follow you invisibly.",
+            Title = "Loaded v10",
+            Content = "TP to furniture for care. Check Requirements tab before autofarm.",
             Duration = 5,
         })
     end)

@@ -2,9 +2,9 @@
 
 local Toys = {}
 
+Toys.TOY_NAME = "squeaky_bone_default"
+
 Toys.TOY_NAME_PATTERNS = {
-    "squeaky",
-    "squeaky_bone",
     "squeaky_bone_default",
     "SqueakyToyTool",
 }
@@ -21,6 +21,9 @@ end
 
 local function nameMatches(str)
     local text = lower(str)
+    if text == lower(Toys.TOY_NAME) then
+        return true
+    end
     for _, pattern in ipairs(Toys.TOY_NAME_PATTERNS) do
         if text:find(lower(pattern), 1, true) then
             return true
@@ -33,13 +36,10 @@ local function toyEntryMatches(entry)
     if type(entry) ~= "table" then
         return false
     end
-    if nameMatches(entry.kind) or nameMatches(entry.id) then
+    if lower(entry.kind) == lower(Toys.TOY_NAME) or lower(entry.id) == lower(Toys.TOY_NAME) then
         return true
     end
-    if entry.properties and nameMatches(entry.properties.kind) then
-        return true
-    end
-    return false
+    return nameMatches(entry.kind) or nameMatches(entry.id)
 end
 
 local function getNilInstances()
@@ -135,7 +135,7 @@ function Toys.getToyId(player)
 end
 
 function Toys.getToyDisplayName()
-    return Toys.TOY_NAME_PATTERNS[1] or "squeaky"
+    return Toys.TOY_NAME
 end
 
 function Toys.equip(Remotes, uniqueId)
