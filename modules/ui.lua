@@ -1,18 +1,44 @@
---// Pet Controller — Rayfield UI + live ailment panel (AilmentViewer logic)
-
-local Rayfield = loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
+--// Pet Controller UI — MUST work via loadstring (no require, no script.Parent)
 
 local UI = {}
 
+local Rayfield = nil
+do
+    local ok, lib = pcall(function()
+        return loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
+    end)
+    if ok then
+        Rayfield = lib
+    else
+        warn("[ui] Rayfield load failed:", lib)
+    end
+end
+
 local COLOR_OFF = Color3.fromRGB(255, 80, 80)
 local COLOR_ON = Color3.fromRGB(80, 255, 120)
-local COLOR_MUTED = Color3.fromRGB(160, 160, 170)
+local COLOR_MUTED = Color3.fromRGB(180, 180, 190)
+
+local function setLabel(label, text, color)
+    if not label then return end
+    pcall(function() label:Set(text, 0, color or COLOR_MUTED, false) end)
+    pcall(function() label:Set(text) end)
+end
 
 function UI.Init(Pets, Sleep, Care, Remotes, PetState)
-    if not PetState then
-        warn("Pet Controller: PetStates module missing — load Core/PetStates before ui")
+    if not Rayfield then
+        warn("[ui] No Rayfield")
         return
     end
+    if not PetState then
+        warn("[ui] No PetState — loader must load PetStates.lua first")
+        return
+    end
+    if not Pets or not Sleep or not Care or not Remotes then
+        warn("[ui] Missing Pets/Sleep/Care/Remotes module")
+        return
+    end
+
+    print("[ui] Init v4 — ailments on Controls tab")
 
     local player = game:GetService("Players").LocalPlayer
     local HoldBaby = Remotes.HoldBaby
@@ -21,399 +47,210 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState)
     local DataChanged = Remotes.DataChanged
 
     local selectedPetName = nil
-    local petOptions = {}
     local PetDropdown = nil
     local autofarmEnabled = false
     local autofarmLoop = nil
-    local ailmentsPanelRefresh = nil
+    local track = PetState.TRACKED_AILMENTS
 
-    local ailmentsToTrack = PetState.TRACKED_AILMENTS
-
-    local function resolveSelectedPet()
-        if not selectedPetName then
-            return nil
-        end
-        local pet = Pets.FindPetByName(selectedPetName)
-        if pet and pet.Parent and pet:IsDescendantOf(workspace) then
-            return pet
-        end
+    local function getPet()
+        if not selectedPetName then return nil end
+        local p = Pets.FindPetByName(selectedPetName)
+        if p and p.Parent and p:IsDescendantOf(workspace) then return p end
         return nil
     end
 
-    local function activateFurniture(id, target, partName, label, pet)
-        pet = pet or resolveSelectedPet()
-        if not pet then
-            return false, "No pet selected"
+    local function useFurniture(id, target, part, pet)
+        pet = pet or getPet()
+        if not pet or not id or not target then return false end
+        local cf = target:IsA("BasePart") and target.CFrame or target.PrimaryPart and target.PrimaryPart.CFrame
+        if not cf then
+            local p = target:FindFirstChild(part) or target:FindFirstChildOfClass("BasePart")
+            cf = p and p.CFrame
         end
-        if not id or not target then
-            return false, "No furniture"
-        end
-
-        local cframe = target:IsA("BasePart") and target.CFrame or (target.PrimaryPart and target.PrimaryPart.CFrame)
-        if not cframe then
-            local part = target:FindFirstChild(partName) or target:FindFirstChildOfClass("BasePart")
-            cframe = part and part.CFrame
-        end
-        if not cframe then
-            return false, "Invalid position"
-        end
-
+        if not cf then return false end
         local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-        if root then
-            root.CFrame = cframe * CFrame.new(0, 0, -5)
-        end
-
-        local ok, err = pcall(function()
-            ActivateFurniture:InvokeServer(player, id, partName, {cframe = cframe}, pet)
+        if root then root.CFrame = cf * CFrame.new(0, 0, -5) end
+        return pcall(function()
+            ActivateFurniture:InvokeServer(player, id, part, {cframe = cf}, pet)
         end)
-        if not ok then
-            warn("FURNITURE ERROR", label, err)
-        end
-        return ok, ok and "Success" or err
     end
 
     local Window = Rayfield:CreateWindow({
         Name = "Pet Controller",
         Icon = 0,
         LoadingTitle = "Pet Controller",
-        LoadingSubtitle = "Adopt Me pet care",
-        ShowText = "Pet Controller",
-        Theme = "Ocean",
+        LoadingSubtitle = "v4",
+        Theme = "Default",
         ToggleUIKeybind = Enum.KeyCode.F2,
-        DisableRayfieldPrompts = false,
-        ConfigurationSaving = {
-            Enabled = true,
-            FolderName = "PetController",
-            FileName = "config",
-        },
+        ConfigurationSaving = {Enabled = true, FolderName = "PetController", FileName = "config"},
     })
 
-    local ControlsTab = Window:CreateTab("Controls", "gamepad-2")
-    local NeedsTab = Window:CreateTab("Pet Needs", "heart-pulse")
+    local Tab = Window:CreateTab("Controls", 0)
 
-    ControlsTab:CreateSection("Status")
-    local StatusLabel = ControlsTab:CreateLabel("Status: Ready", 0, COLOR_MUTED, false)
-    ControlsTab:CreateSection("Pet Selection")
+    Tab:CreateSection("Status")
+    local StatusLabel = Tab:CreateLabel("Status: Ready")
+    local AutofarmLabel = Tab:CreateLabel("Needs: —")
 
-    NeedsTab:CreateSection("Live ailments (selected pet)")
-    NeedsTab:CreateParagraph({
-        Title = "How this works",
-        Content = "Updates from DataAPI/DataChanged (ailments_manager). Green = active need. Check Raw keys if thirsty shows false but you expect thirst.",
-    })
-
-    local PetIdLabel = NeedsTab:CreateLabel("Pet ID: —", 0, COLOR_MUTED, false)
-    NeedsTab:CreateDivider()
-
-    local ailmentLabels = {}
-    for _, name in ipairs(ailmentsToTrack) do
-        ailmentLabels[name] = NeedsTab:CreateLabel(name .. ": false", 0, COLOR_OFF, false)
+    Tab:CreateSection("Pet Ailments (live)")
+    local PetIdLabel = Tab:CreateLabel("Pet ID: —")
+    local ailLabels = {}
+    for _, n in ipairs(track) do
+        ailLabels[n] = Tab:CreateLabel(n .. ": false")
     end
+    local RawLabel = Tab:CreateLabel("Raw keys: waiting")
 
-    NeedsTab:CreateDivider()
-    local RawKeysLabel = NeedsTab:CreateLabel("Raw keys: (waiting)", 0, COLOR_MUTED, false)
-
-    local function setAilmentLabel(name, isActive)
-        local label = ailmentLabels[name]
-        if not label then
+    local function refreshAilments()
+        local pet = getPet()
+        if not pet then
+            setLabel(PetIdLabel, "Pet ID: none", COLOR_MUTED)
+            for _, n in ipairs(track) do setLabel(ailLabels[n], n .. ": false", COLOR_OFF) end
+            setLabel(RawLabel, "Raw keys: —", COLOR_MUTED)
+            setLabel(AutofarmLabel, "Needs: —", COLOR_MUTED)
             return
         end
-        if isActive then
-            label:Set(name .. ": true", 0, COLOR_ON, false)
+        setLabel(PetIdLabel, "Pet: " .. pet.Name .. " | " .. tostring(PetState.findStateId(pet) or "?"), COLOR_MUTED)
+        local list = {}
+        for _, n in ipairs(track) do
+            local on = PetState.hasNeed(pet, n)
+            setLabel(ailLabels[n], n .. ": " .. tostring(on), on and COLOR_ON or COLOR_OFF)
+            if on then table.insert(list, n) end
+        end
+        local act = PetState.getActive(pet)
+        if act then
+            local k = {}
+            for key in pairs(act) do table.insert(k, key) end
+            table.sort(k)
+            setLabel(RawLabel, "Raw keys: " .. table.concat(k, ", "), COLOR_MUTED)
         else
-            label:Set(name .. ": false", 0, COLOR_OFF, false)
+            setLabel(RawLabel, "Raw keys: no ailments_manager data yet", COLOR_MUTED)
         end
+        setLabel(AutofarmLabel, "Needs: " .. (#list > 0 and table.concat(list, ", ") or "none"), COLOR_MUTED)
     end
 
-    local function refreshAilmentPanel()
-        local pet = resolveSelectedPet()
-        if not pet then
-            PetIdLabel:Set("Pet ID: no pet selected", 0, COLOR_MUTED, false)
-            for _, name in ipairs(ailmentsToTrack) do
-                setAilmentLabel(name, false)
-            end
-            RawKeysLabel:Set("Raw keys: —", 0, COLOR_MUTED, false)
-            return
-        end
-
-        local stateId = PetState.findStateId(pet)
-        local resolveId = PetState.resolvePetId(pet)
-        PetIdLabel:Set(
-            "Pet ID: " .. tostring(stateId or resolveId or "?"),
-            0,
-            COLOR_MUTED,
-            false
-        )
-
-        for _, name in ipairs(ailmentsToTrack) do
-            setAilmentLabel(name, PetState.hasNeed(pet, name))
-        end
-
-        local active = PetState.getActive(pet)
-        if active then
-            local keys = {}
-            for key in pairs(active) do
-                table.insert(keys, key)
-            end
-            table.sort(keys)
-            RawKeysLabel:Set(
-                #keys > 0 and ("Raw keys: " .. table.concat(keys, ", ")) or "Raw keys: (none)",
-                0,
-                COLOR_MUTED,
-                false
-            )
-        else
-            RawKeysLabel:Set("Raw keys: no data yet — wait for ailments_manager", 0, COLOR_MUTED, false)
-        end
+    local function setStatus(t)
+        setLabel(StatusLabel, "Status: " .. t, COLOR_MUTED)
     end
 
-    ailmentsPanelRefresh = refreshAilmentPanel
-
-    local function updateStatus(text)
-        StatusLabel:Set("Status: " .. text, 0, COLOR_MUTED, false)
-    end
-
-    local function refreshAllUI()
-        refreshAilmentPanel()
-    end
-
-    local runAutofarmOnce
-
-    runAutofarmOnce = function()
-        local pet = resolveSelectedPet()
-        if not pet then
-            return false
-        end
-        PetState.debugPetNeeds(pet, "autofarm")
-
-        if PetState.isHungry(pet) then
-            updateStatus("Feeding...")
-            local id, obj = Care.FindFood()
-            if id and obj then activateFurniture(id, obj, "UseBlock", "food", pet) end
-            return true
-        end
-        if PetState.isThirsty(pet) then
-            updateStatus("Drinking...")
-            local id, obj = Care.FindDrink()
-            if id and obj then activateFurniture(id, obj, "UseBlock", "drink", pet) end
-            return true
-        end
-        if PetState.isToilet(pet) then
-            updateStatus("Toilet...")
-            local id, obj = Care.FindToilet()
-            if id and obj then activateFurniture(id, obj, "Seat1", "toilet", pet) end
-            return true
-        end
-        if PetState.isDirty(pet) then
-            updateStatus("Shower...")
-            local id, obj = Care.FindShower()
-            if id and obj then activateFurniture(id, obj, "UseBlock", "shower", pet) end
-            return true
-        end
-        if PetState.isSleepy(pet) then
-            updateStatus("Sleep...")
-            local id, obj = Sleep.FindBed()
-            if id and obj then activateFurniture(id, obj, "Seat1", "bed", pet) end
-            return true
-        end
-        return true
-    end
-
-    local function setAutofarm(enabled)
-        autofarmEnabled = enabled
-        if enabled then
-            updateStatus("Autofarm enabled")
-            Rayfield:Notify({
-                Title = "Autofarm",
-                Content = "Watching pet needs from ailments_manager",
-                Duration = 4,
-                Image = "bot",
-            })
-            if not autofarmLoop then
-                autofarmLoop = task.spawn(function()
-                    while autofarmEnabled do
-                        if resolveSelectedPet() then
-                            pcall(runAutofarmOnce)
-                        else
-                            updateStatus("No pet selected")
-                        end
-                        task.wait(4)
-                    end
-                    autofarmLoop = nil
-                end)
-            end
-        else
-            updateStatus("Autofarm disabled")
-        end
-        refreshAllUI()
-    end
-
-    PetState.subscribe(function()
-        refreshAllUI()
-        local pet = resolveSelectedPet()
-        if pet and autofarmEnabled then
-            task.spawn(function()
-                pcall(runAutofarmOnce)
-            end)
-        end
-    end)
+    PetState.subscribe(refreshAilments)
 
     if DataChanged and DataChanged:IsA("RemoteEvent") then
-        DataChanged.OnClientEvent:Connect(function(_, dataType, data)
-            if dataType ~= "ailments_manager" then
-                return
+        DataChanged.OnClientEvent:Connect(function(_, dtype, data)
+            if dtype == "ailments_manager" then
+                PetState.parseAilmentsManager(data)
             end
-            PetState.parseAilmentsManager(data)
         end)
-    else
-        warn("DataAPI/DataChanged missing")
     end
 
-    ControlsTab:CreateSection("Actions")
+    local function autofarm()
+        local pet = getPet()
+        if not pet then return end
+        refreshAilments()
+        if PetState.isHungry(pet) then
+            setStatus("Feeding")
+            local a, b = Care.FindFood()
+            if a and b then useFurniture(a, b, "UseBlock", pet) end
+            return
+        end
+        if PetState.isThirsty(pet) then
+            setStatus("Drinking")
+            local a, b = Care.FindDrink()
+            if a and b then useFurniture(a, b, "UseBlock", pet) end
+            return
+        end
+        if PetState.isToilet(pet) then
+            setStatus("Toilet")
+            local a, b = Care.FindToilet()
+            if a and b then useFurniture(a, b, "Seat1", pet) end
+            return
+        end
+        if PetState.isDirty(pet) then
+            setStatus("Shower")
+            local a, b = Care.FindShower()
+            if a and b then useFurniture(a, b, "UseBlock", pet) end
+            return
+        end
+        if PetState.isSleepy(pet) then
+            setStatus("Sleep")
+            local a, b = Sleep.FindBed()
+            if a and b then useFurniture(a, b, "Seat1", pet) end
+            return
+        end
+        setStatus("Nothing needed")
+    end
 
-    PetDropdown = ControlsTab:CreateDropdown({
+    Tab:CreateSection("Pet Selection")
+    PetDropdown = Tab:CreateDropdown({
         Name = "Select Pet",
         Options = {"No pets available"},
         CurrentOption = {"No pets available"},
         MultipleOptions = false,
         Flag = "PetDropdown",
-        Callback = function(opts)
-            if opts[1] == "No pets available" then
-                selectedPetName = nil
-                updateStatus("No pet")
-                refreshAllUI()
-                return
-            end
-            selectedPetName = opts[1]
-            local pet = resolveSelectedPet()
-            updateStatus(pet and ("Selected: " .. pet.Name) or "Pet not found")
-            if pet then
-                PetState.debugPetNeeds(pet, "select")
-            end
-            refreshAllUI()
+        Callback = function(o)
+            selectedPetName = (o[1] ~= "No pets available") and o[1] or nil
+            refreshAilments()
         end,
     })
 
-    ControlsTab:CreateButton({Name = "Refresh Pets", Callback = function()
-        petOptions = {}
-        for _, p in ipairs(Pets.GetPets()) do
-            table.insert(petOptions, p.Name)
+    Tab:CreateButton({Name = "Refresh Pets", Callback = function()
+        local o = {}
+        for _, p in ipairs(Pets.GetPets()) do table.insert(o, p.Name) end
+        if #o > 0 then
+            PetDropdown:Refresh(o)
+            PetDropdown:Set({o[1]})
+            selectedPetName = o[1]
         end
-        if #petOptions > 0 then
-            PetDropdown:Refresh(petOptions)
-            PetDropdown:Set({petOptions[1]})
-            selectedPetName = petOptions[1]
-            updateStatus("Found " .. #petOptions .. " pets")
-        else
-            PetDropdown:Refresh({"No pets available"})
-            updateStatus("No pets found")
-        end
-        refreshAllUI()
+        refreshAilments()
     end})
 
-    ControlsTab:CreateButton({Name = "Clear Selection", Callback = function()
-        selectedPetName = nil
-        updateStatus("Cleared")
-        refreshAllUI()
+    Tab:CreateButton({Name = "Refresh Ailments", Callback = function()
+        refreshAilments()
+        local p = getPet()
+        if p then PetState.debugPetNeeds(p, "manual") end
     end})
 
-    ControlsTab:CreateDivider()
-    ControlsTab:CreateSection("Care")
+    Tab:CreateSection("Care")
+    Tab:CreateButton({Name = "Hold", Callback = function() local p = getPet() if p then pcall(function() HoldBaby:FireServer(p) end) end end})
+    Tab:CreateButton({Name = "Drop", Callback = function() local p = getPet() if p then pcall(function() EjectBaby:FireServer(p) end) end end})
+    Tab:CreateButton({Name = "Feed", Callback = function() local p = getPet() if not p then return end local a,b=Care.FindFood() if a and b then useFurniture(a,b,"UseBlock",p) end end})
+    Tab:CreateButton({Name = "Drink", Callback = function() local p = getPet() if not p then return end local a,b=Care.FindDrink() if a and b then useFurniture(a,b,"UseBlock",p) end end})
+    Tab:CreateButton({Name = "Shower", Callback = function() local p = getPet() if not p then return end local a,b=Care.FindShower() if a and b then useFurniture(a,b,"UseBlock",p) end end})
+    Tab:CreateButton({Name = "Toilet", Callback = function() local p = getPet() if not p then return end local a,b=Care.FindToilet() if a and b then useFurniture(a,b,"Seat1",p) end end})
+    Tab:CreateButton({Name = "Sleep", Callback = function() local p = getPet() if not p then return end local a,b=Sleep.FindBed() if a and b then useFurniture(a,b,"Seat1",p) end end})
 
-    ControlsTab:CreateButton({Name = "Hold Pet", Callback = function()
-        local pet = resolveSelectedPet()
-        if not pet then updateStatus("No pet") return end
-        pcall(function() HoldBaby:FireServer(pet) end)
-        updateStatus("Holding " .. pet.Name)
-    end})
-
-    ControlsTab:CreateButton({Name = "Drop Pet", Callback = function()
-        local pet = resolveSelectedPet()
-        if not pet then updateStatus("No pet") return end
-        pcall(function() EjectBaby:FireServer(pet) end)
-        updateStatus("Dropped " .. pet.Name)
-    end})
-
-    ControlsTab:CreateButton({Name = "Put To Sleep", Callback = function()
-        local pet = resolveSelectedPet()
-        if not pet then updateStatus("No pet") return end
-        local id, obj = Sleep.FindBed()
-        if id and obj then activateFurniture(id, obj, "Seat1", "sleep", pet) end
-        updateStatus(id and "Sleeping" or "No bed")
-    end})
-
-    ControlsTab:CreateButton({Name = "Feed Pet", Callback = function()
-        local pet = resolveSelectedPet()
-        if not pet then updateStatus("No pet") return end
-        local id, obj = Care.FindFood()
-        if id and obj then activateFurniture(id, obj, "UseBlock", "food", pet) end
-        updateStatus(id and "Eating" or "No food")
-    end})
-
-    ControlsTab:CreateButton({Name = "Give Drink", Callback = function()
-        local pet = resolveSelectedPet()
-        if not pet then updateStatus("No pet") return end
-        local id, obj = Care.FindDrink()
-        if id and obj then activateFurniture(id, obj, "UseBlock", "drink", pet) end
-        updateStatus(id and "Drinking" or "No drink")
-    end})
-
-    ControlsTab:CreateButton({Name = "Shower Pet", Callback = function()
-        local pet = resolveSelectedPet()
-        if not pet then updateStatus("No pet") return end
-        local id, obj = Care.FindShower()
-        if id and obj then activateFurniture(id, obj, "UseBlock", "shower", pet) end
-        updateStatus(id and "Showering" or "No shower")
-    end})
-
-    ControlsTab:CreateButton({Name = "Toilet", Callback = function()
-        local pet = resolveSelectedPet()
-        if not pet then updateStatus("No pet") return end
-        local id, obj = Care.FindToilet()
-        if id and obj then activateFurniture(id, obj, "Seat1", "toilet", pet) end
-        updateStatus(id and "Toilet" or "No toilet")
-    end})
-
-    ControlsTab:CreateDivider()
-    ControlsTab:CreateSection("Automation")
-
-    ControlsTab:CreateToggle({Name = "Autofarm", CurrentValue = false, Flag = "Autofarm", Callback = function(v)
-        setAutofarm(v)
-    end})
-
-    NeedsTab:CreateButton({Name = "Refresh Needs Display", Callback = function()
-        local pet = resolveSelectedPet()
-        if pet then
-            PetState.debugPetNeeds(pet, "manual")
-        end
-        refreshAilmentPanel()
-        Rayfield:Notify({
-            Title = "Needs refreshed",
-            Content = pet and ("Checked " .. pet.Name) or "No pet selected",
-            Duration = 3,
-            Image = "refresh-cw",
-        })
-    end})
+    Tab:CreateSection("Autofarm")
+    Tab:CreateToggle({
+        Name = "Autofarm",
+        CurrentValue = false,
+        Flag = "Autofarm",
+        Callback = function(on)
+            autofarmEnabled = on
+            if on and not autofarmLoop then
+                autofarmLoop = task.spawn(function()
+                    while autofarmEnabled do
+                        pcall(autofarm)
+                        task.wait(4)
+                    end
+                    autofarmLoop = nil
+                end)
+            end
+            setStatus(on and "Autofarm ON" or "OFF")
+        end,
+    })
 
     local pets = Pets.GetPets()
     if #pets > 0 then
-        for _, p in ipairs(pets) do
-            table.insert(petOptions, p.Name)
-        end
-        PetDropdown:Refresh(petOptions)
-        selectedPetName = petOptions[1]
+        local o = {}
+        for _, p in ipairs(pets) do table.insert(o, p.Name) end
+        PetDropdown:Refresh(o)
+        selectedPetName = o[1]
+        PetDropdown:Set({o[1]})
     end
 
-    refreshAllUI()
+    refreshAilments()
     Rayfield:LoadConfiguration()
-
-    Rayfield:Notify({
-        Title = "Pet Controller loaded",
-        Content = "Open the Pet Needs tab to see live ailments",
-        Duration = 5,
-        Image = "check",
-    })
-
-    print("Pet Controller loaded — Pet Needs tab shows ailments_manager data")
+    pcall(function()
+        Rayfield:Notify({Title = "Loaded v4", Content = "Scroll to Pet Ailments section", Duration = 5})
+    end)
 end
 
 return UI
