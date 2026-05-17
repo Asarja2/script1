@@ -8,6 +8,7 @@ local Helpers = require(script.Parent:FindFirstChild("Utils"):FindFirstChild("He
 local Furniture = require(script.Parent:FindFirstChild("Utils"):FindFirstChild("Furniture"))
 local UIWindow = require(script.Parent:FindFirstChild("UI"):FindFirstChild("Window"))
 local UIStatus = require(script.Parent:FindFirstChild("UI"):FindFirstChild("Status"))
+local AilmentsPanel = require(script.Parent:FindFirstChild("UI"):FindFirstChild("AilmentsPanel"))
 
 local UI = {}
 
@@ -49,15 +50,27 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState)
 
     local function refreshSelectedPetStatus()
         status.refreshSelectedPetStatus(resolveSelectedPet())
+        ailmentsPanel.refresh()
     end
 
-    local window = UIWindow.createWindow(Rayfield)
-    local tab = UIWindow.createTab(window, "Controls", 0)
+    local window = Rayfield:CreateWindow({
+        Name = "Pet Controller",
+        Icon = 0,
+        LoadingTitle = "Pet Controller",
+        LoadingSubtitle = "Adopt Me pet care",
+        Theme = "Ocean",
+        ToggleUIKeybind = Enum.KeyCode.F2,
+        ConfigurationSaving = {Enabled = true, FolderName = "PetController", FileName = "config"},
+    })
+    local tab = window:CreateTab("Controls", "gamepad-2")
+    local needsTab = window:CreateTab("Pet Needs", "heart-pulse")
     local StatusLabel = UIWindow.createLabel(tab, "Status: Ready")
     local PetStatusLabel = UIWindow.createLabel(tab, "Pet Status: unknown")
     status.setStatusLabels(StatusLabel, PetStatusLabel)
     UIWindow.createSection(tab, "Pet Selection")
     UIWindow.createSection(tab, "Actions")
+
+    local ailmentsPanel = AilmentsPanel.Create(needsTab, PetStateApi, resolveSelectedPet)
 
     local runAutofarmOnce
 
@@ -150,7 +163,7 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState)
             end
             PetStateApi.parseAilmentsManager(data)
         end)
-        print("Pet Controller: ailments_manager → PetState (kind)")
+        print("Pet Controller: ailments_manager → PetState (keys + kind)")
     end
 
     local function refreshPets()

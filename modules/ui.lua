@@ -1,8 +1,12 @@
---// Pet Controller UI — needs from PetStates only (ailments_manager.kind)
+--// Pet Controller — Rayfield UI + live ailment panel (AilmentViewer logic)
 
 local Rayfield = loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
 
 local UI = {}
+
+local COLOR_OFF = Color3.fromRGB(255, 80, 80)
+local COLOR_ON = Color3.fromRGB(80, 255, 120)
+local COLOR_MUTED = Color3.fromRGB(160, 160, 170)
 
 function UI.Init(Pets, Sleep, Care, Remotes, PetState)
     if not PetState then
@@ -21,6 +25,9 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState)
     local PetDropdown = nil
     local autofarmEnabled = false
     local autofarmLoop = nil
+    local ailmentsPanelRefresh = nil
+
+    local ailmentsToTrack = PetState.TRACKED_AILMENTS
 
     local function resolveSelectedPet()
         if not selectedPetName then
@@ -56,7 +63,6 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState)
             root.CFrame = cframe * CFrame.new(0, 0, -5)
         end
 
-        print("DEBUG ACTION", label, "pet=", pet.Name, "furnitureId=", id)
         local ok, err = pcall(function()
             ActivateFurniture:InvokeServer(player, id, partName, {cframe = cframe}, pet)
         end)
@@ -70,40 +76,104 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState)
         Name = "Pet Controller",
         Icon = 0,
         LoadingTitle = "Pet Controller",
-        LoadingSubtitle = "Loading...",
-        Theme = "Default",
+        LoadingSubtitle = "Adopt Me pet care",
+        ShowText = "Pet Controller",
+        Theme = "Ocean",
         ToggleUIKeybind = Enum.KeyCode.F2,
-        ConfigurationSaving = {Enabled = true, FolderName = "PetController", FileName = "config"},
+        DisableRayfieldPrompts = false,
+        ConfigurationSaving = {
+            Enabled = true,
+            FolderName = "PetController",
+            FileName = "config",
+        },
     })
 
-    local Tab = Window:CreateTab("Controls", 0)
-    Tab:CreateSection("Status")
-    local StatusLabel = Tab:CreateLabel("Status: Ready")
-    local PetStatusLabel = Tab:CreateLabel("Pet Status: unknown")
-    Tab:CreateSection("Pet Selection")
-    Tab:CreateSection("Actions")
+    local ControlsTab = Window:CreateTab("Controls", "gamepad-2")
+    local NeedsTab = Window:CreateTab("Pet Needs", "heart-pulse")
 
-    local function updateStatus(text)
-        StatusLabel:Set("Status: " .. text)
+    ControlsTab:CreateSection("Status")
+    local StatusLabel = ControlsTab:CreateLabel("Status: Ready", 0, COLOR_MUTED, false)
+    ControlsTab:CreateSection("Pet Selection")
+
+    NeedsTab:CreateSection("Live ailments (selected pet)")
+    NeedsTab:CreateParagraph({
+        Title = "How this works",
+        Content = "Updates from DataAPI/DataChanged (ailments_manager). Green = active need. Check Raw keys if thirsty shows false but you expect thirst.",
+    })
+
+    local PetIdLabel = NeedsTab:CreateLabel("Pet ID: —", 0, COLOR_MUTED, false)
+    NeedsTab:CreateDivider()
+
+    local ailmentLabels = {}
+    for _, name in ipairs(ailmentsToTrack) do
+        ailmentLabels[name] = NeedsTab:CreateLabel(name .. ": false", 0, COLOR_OFF, false)
     end
 
-    local function updatePetStatusLabel()
-        local pet = resolveSelectedPet()
-        if not pet then
-            PetStatusLabel:Set("Pet Status: no pet selected")
+    NeedsTab:CreateDivider()
+    local RawKeysLabel = NeedsTab:CreateLabel("Raw keys: (waiting)", 0, COLOR_MUTED, false)
+
+    local function setAilmentLabel(name, isActive)
+        local label = ailmentLabels[name]
+        if not label then
             return
         end
-        local parts = {}
-        if PetState.isDirty(pet) then table.insert(parts, "Dirty") end
-        if PetState.isSleepy(pet) then table.insert(parts, "Sleepy") end
-        if PetState.isHungry(pet) then table.insert(parts, "Hungry") end
-        if PetState.isThirsty(pet) then table.insert(parts, "Thirsty") end
-        if PetState.isToilet(pet) then table.insert(parts, "Needs toilet") end
-        if PetState.isSchool(pet) then table.insert(parts, "School") end
-        if PetState.isPetMe(pet) then table.insert(parts, "Wants attention") end
-        PetStatusLabel:Set(
-            #parts == 0 and "Pet Status: no needs detected" or ("Pet Status: " .. table.concat(parts, ", "))
+        if isActive then
+            label:Set(name .. ": true", 0, COLOR_ON, false)
+        else
+            label:Set(name .. ": false", 0, COLOR_OFF, false)
+        end
+    end
+
+    local function refreshAilmentPanel()
+        local pet = resolveSelectedPet()
+        if not pet then
+            PetIdLabel:Set("Pet ID: no pet selected", 0, COLOR_MUTED, false)
+            for _, name in ipairs(ailmentsToTrack) do
+                setAilmentLabel(name, false)
+            end
+            RawKeysLabel:Set("Raw keys: —", 0, COLOR_MUTED, false)
+            return
+        end
+
+        local stateId = PetState.findStateId(pet)
+        local resolveId = PetState.resolvePetId(pet)
+        PetIdLabel:Set(
+            "Pet ID: " .. tostring(stateId or resolveId or "?"),
+            0,
+            COLOR_MUTED,
+            false
         )
+
+        for _, name in ipairs(ailmentsToTrack) do
+            setAilmentLabel(name, PetState.hasNeed(pet, name))
+        end
+
+        local active = PetState.getActive(pet)
+        if active then
+            local keys = {}
+            for key in pairs(active) do
+                table.insert(keys, key)
+            end
+            table.sort(keys)
+            RawKeysLabel:Set(
+                #keys > 0 and ("Raw keys: " .. table.concat(keys, ", ")) or "Raw keys: (none)",
+                0,
+                COLOR_MUTED,
+                false
+            )
+        else
+            RawKeysLabel:Set("Raw keys: no data yet — wait for ailments_manager", 0, COLOR_MUTED, false)
+        end
+    end
+
+    ailmentsPanelRefresh = refreshAilmentPanel
+
+    local function updateStatus(text)
+        StatusLabel:Set("Status: " .. text, 0, COLOR_MUTED, false)
+    end
+
+    local function refreshAllUI()
+        refreshAilmentPanel()
     end
 
     local runAutofarmOnce
@@ -152,6 +222,12 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState)
         autofarmEnabled = enabled
         if enabled then
             updateStatus("Autofarm enabled")
+            Rayfield:Notify({
+                Title = "Autofarm",
+                Content = "Watching pet needs from ailments_manager",
+                Duration = 4,
+                Image = "bot",
+            })
             if not autofarmLoop then
                 autofarmLoop = task.spawn(function()
                     while autofarmEnabled do
@@ -168,23 +244,18 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState)
         else
             updateStatus("Autofarm disabled")
         end
-        updatePetStatusLabel()
+        refreshAllUI()
     end
 
-    local function onAilmentsUpdated()
+    PetState.subscribe(function()
+        refreshAllUI()
         local pet = resolveSelectedPet()
-        if pet then
-            PetState.debugPetNeeds(pet, "ailments_manager")
-            updatePetStatusLabel()
-            if autofarmEnabled then
-                task.spawn(function()
-                    pcall(runAutofarmOnce)
-                end)
-            end
+        if pet and autofarmEnabled then
+            task.spawn(function()
+                pcall(runAutofarmOnce)
+            end)
         end
-    end
-
-    PetState.subscribe(onAilmentsUpdated)
+    end)
 
     if DataChanged and DataChanged:IsA("RemoteEvent") then
         DataChanged.OnClientEvent:Connect(function(_, dataType, data)
@@ -193,12 +264,13 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState)
             end
             PetState.parseAilmentsManager(data)
         end)
-        print("Pet Controller: ailments_manager → PetState (kind)")
     else
-        warn("Pet Controller: DataAPI/DataChanged missing")
+        warn("DataAPI/DataChanged missing")
     end
 
-    PetDropdown = Tab:CreateDropdown({
+    ControlsTab:CreateSection("Actions")
+
+    PetDropdown = ControlsTab:CreateDropdown({
         Name = "Select Pet",
         Options = {"No pets available"},
         CurrentOption = {"No pets available"},
@@ -208,22 +280,20 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState)
             if opts[1] == "No pets available" then
                 selectedPetName = nil
                 updateStatus("No pet")
-                updatePetStatusLabel()
+                refreshAllUI()
                 return
             end
             selectedPetName = opts[1]
             local pet = resolveSelectedPet()
+            updateStatus(pet and ("Selected: " .. pet.Name) or "Pet not found")
             if pet then
-                updateStatus("Selected: " .. pet.Name)
                 PetState.debugPetNeeds(pet, "select")
-            else
-                updateStatus("Pet not found")
             end
-            updatePetStatusLabel()
+            refreshAllUI()
         end,
     })
 
-    Tab:CreateButton({Name = "🔄 Refresh", Callback = function()
+    ControlsTab:CreateButton({Name = "Refresh Pets", Callback = function()
         petOptions = {}
         for _, p in ipairs(Pets.GetPets()) do
             table.insert(petOptions, p.Name)
@@ -233,34 +303,37 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState)
             PetDropdown:Set({petOptions[1]})
             selectedPetName = petOptions[1]
             updateStatus("Found " .. #petOptions .. " pets")
-            updatePetStatusLabel()
         else
             PetDropdown:Refresh({"No pets available"})
             updateStatus("No pets found")
         end
+        refreshAllUI()
     end})
 
-    Tab:CreateButton({Name = "❌ Clear", Callback = function()
+    ControlsTab:CreateButton({Name = "Clear Selection", Callback = function()
         selectedPetName = nil
         updateStatus("Cleared")
-        updatePetStatusLabel()
+        refreshAllUI()
     end})
 
-    Tab:CreateButton({Name = "🍼 Hold", Callback = function()
+    ControlsTab:CreateDivider()
+    ControlsTab:CreateSection("Care")
+
+    ControlsTab:CreateButton({Name = "Hold Pet", Callback = function()
         local pet = resolveSelectedPet()
         if not pet then updateStatus("No pet") return end
         pcall(function() HoldBaby:FireServer(pet) end)
         updateStatus("Holding " .. pet.Name)
     end})
 
-    Tab:CreateButton({Name = "⬇️ Drop", Callback = function()
+    ControlsTab:CreateButton({Name = "Drop Pet", Callback = function()
         local pet = resolveSelectedPet()
         if not pet then updateStatus("No pet") return end
         pcall(function() EjectBaby:FireServer(pet) end)
         updateStatus("Dropped " .. pet.Name)
     end})
 
-    Tab:CreateButton({Name = "🛏️ Sleep", Callback = function()
+    ControlsTab:CreateButton({Name = "Put To Sleep", Callback = function()
         local pet = resolveSelectedPet()
         if not pet then updateStatus("No pet") return end
         local id, obj = Sleep.FindBed()
@@ -268,7 +341,7 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState)
         updateStatus(id and "Sleeping" or "No bed")
     end})
 
-    Tab:CreateButton({Name = "🍎 Feed", Callback = function()
+    ControlsTab:CreateButton({Name = "Feed Pet", Callback = function()
         local pet = resolveSelectedPet()
         if not pet then updateStatus("No pet") return end
         local id, obj = Care.FindFood()
@@ -276,7 +349,7 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState)
         updateStatus(id and "Eating" or "No food")
     end})
 
-    Tab:CreateButton({Name = "🥤 Drink", Callback = function()
+    ControlsTab:CreateButton({Name = "Give Drink", Callback = function()
         local pet = resolveSelectedPet()
         if not pet then updateStatus("No pet") return end
         local id, obj = Care.FindDrink()
@@ -284,7 +357,7 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState)
         updateStatus(id and "Drinking" or "No drink")
     end})
 
-    Tab:CreateButton({Name = "🚿 Shower", Callback = function()
+    ControlsTab:CreateButton({Name = "Shower Pet", Callback = function()
         local pet = resolveSelectedPet()
         if not pet then updateStatus("No pet") return end
         local id, obj = Care.FindShower()
@@ -292,7 +365,7 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState)
         updateStatus(id and "Showering" or "No shower")
     end})
 
-    Tab:CreateButton({Name = "🚽 Toilet", Callback = function()
+    ControlsTab:CreateButton({Name = "Toilet", Callback = function()
         local pet = resolveSelectedPet()
         if not pet then updateStatus("No pet") return end
         local id, obj = Care.FindToilet()
@@ -300,16 +373,25 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState)
         updateStatus(id and "Toilet" or "No toilet")
     end})
 
-    Tab:CreateToggle({Name = "🤖 Autofarm", CurrentValue = false, Flag = "Autofarm", Callback = function(v)
+    ControlsTab:CreateDivider()
+    ControlsTab:CreateSection("Automation")
+
+    ControlsTab:CreateToggle({Name = "Autofarm", CurrentValue = false, Flag = "Autofarm", Callback = function(v)
         setAutofarm(v)
     end})
 
-    Tab:CreateButton({Name = "🔍 Debug Pet Needs", Callback = function()
+    NeedsTab:CreateButton({Name = "Refresh Needs Display", Callback = function()
         local pet = resolveSelectedPet()
-        if not pet then updateStatus("No pet selected") return end
-        PetState.debugPetNeeds(pet, "manual")
-        updatePetStatusLabel()
-        updateStatus("Printed needs to console (F9)")
+        if pet then
+            PetState.debugPetNeeds(pet, "manual")
+        end
+        refreshAilmentPanel()
+        Rayfield:Notify({
+            Title = "Needs refreshed",
+            Content = pet and ("Checked " .. pet.Name) or "No pet selected",
+            Duration = 3,
+            Image = "refresh-cw",
+        })
     end})
 
     local pets = Pets.GetPets()
@@ -319,10 +401,19 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState)
         end
         PetDropdown:Refresh(petOptions)
         selectedPetName = petOptions[1]
-        updatePetStatusLabel()
     end
 
+    refreshAllUI()
     Rayfield:LoadConfiguration()
+
+    Rayfield:Notify({
+        Title = "Pet Controller loaded",
+        Content = "Open the Pet Needs tab to see live ailments",
+        Duration = 5,
+        Image = "check",
+    })
+
+    print("Pet Controller loaded — Pet Needs tab shows ailments_manager data")
 end
 
 return UI

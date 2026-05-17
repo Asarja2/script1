@@ -1,14 +1,6 @@
---// Single source of truth for pet needs (ailments_manager → kind)
+--// Single source of truth — same rules as AilmentViewer (keys + kind)
 
 local PetStates = {}
-
-local CARE_NEEDS = {
-    "sleepy",
-    "dirty",
-    "hungry",
-    "thirsty",
-    "toilet",
-}
 
 local TRACKED_AILMENTS = {
     "sleepy",
@@ -18,6 +10,17 @@ local TRACKED_AILMENTS = {
     "toilet",
     "school",
     "pet_me",
+}
+
+-- Aliases so "thirst" key still counts as thirsty
+local NEED_ALIASES = {
+    sleepy = {"sleepy", "tired", "needsleep", "needs_sleep", "sleep"},
+    dirty = {"dirty", "stinky", "stink", "needsbath", "needs_bath", "bath"},
+    hungry = {"hungry", "hunger", "feed", "needsfood", "needs_food", "starving"},
+    thirsty = {"thirsty", "thirst", "needsdrink", "needs_drink", "drink", "hydration"},
+    toilet = {"toilet", "pee", "poop", "restroom"},
+    school = {"school"},
+    pet_me = {"pet_me", "petme", "pet"},
 }
 
 function PetStates.Init()
@@ -81,6 +84,14 @@ function PetStates.Init()
                 end
             end
         end
+        local count, onlyId = 0, nil
+        for stateId in pairs(PetStateById) do
+            count = count + 1
+            onlyId = stateId
+        end
+        if count == 1 then
+            return onlyId
+        end
         return nil
     end
 
@@ -92,12 +103,65 @@ function PetStates.Init()
         return PetStateById[stateId], stateId
     end
 
+    local function activeHas(active, key)
+        return type(active) == "table" and active[tostring(key):lower()] == true
+    end
+
     local function hasNeed(pet, needName)
         local state = getState(pet)
-        if not state or not state.needs then
+        if not state or not state.active then
             return false
         end
-        return state.needs[tostring(needName):lower()] == true
+        local aliases = NEED_ALIASES[needName] or {needName}
+        for _, alias in ipairs(aliases) do
+            if activeHas(state.active, alias) then
+                return true
+            end
+        end
+        return state.needs[needName] == true
+    end
+
+    local function parsePetAilments(petId, ailmentTable)
+        local active = {}
+        local needs = emptyNeeds()
+
+        for ailmentName, ailmentData in pairs(ailmentTable) do
+            local keyName = tostring(ailmentName):lower()
+            active[keyName] = true
+            print("PET:", petId, "AILMENT:", ailmentName)
+
+            if type(ailmentData) == "table" then
+                if ailmentData.kind then
+                    local kind = tostring(ailmentData.kind):lower()
+                    active[kind] = true
+                    print("PET:", petId, "kind=", kind)
+                end
+                if ailmentData.ailment_key then
+                    active[tostring(ailmentData.ailment_key):lower()] = true
+                end
+            end
+        end
+
+        for needName, aliases in pairs(NEED_ALIASES) do
+            for _, alias in ipairs(aliases) do
+                if active[alias] then
+                    needs[needName] = true
+                    break
+                end
+            end
+        end
+
+        for _, name in ipairs(TRACKED_AILMENTS) do
+            if active[name] then
+                needs[name] = true
+            end
+        end
+
+        return {
+            active = active,
+            needs = needs,
+            updatedAt = os.clock(),
+        }
     end
 
     local function parseAilmentsManager(data)
@@ -111,25 +175,7 @@ function PetStates.Init()
 
         for petId, ailmentTable in pairs(data.ailments) do
             if type(ailmentTable) == "table" then
-                local needs = emptyNeeds()
-                local rawKinds = {}
-
-                for _, ailment in pairs(ailmentTable) do
-                    if type(ailment) == "table" and ailment.kind then
-                        local kind = tostring(ailment.kind):lower()
-                        rawKinds[kind] = true
-                        if needs[kind] ~= nil then
-                            needs[kind] = true
-                        end
-                        print("PET:", petId, "kind=", kind)
-                    end
-                end
-
-                PetStateById[tostring(petId)] = {
-                    needs = needs,
-                    rawKinds = rawKinds,
-                    updatedAt = os.clock(),
-                }
+                PetStateById[tostring(petId)] = parsePetAilments(petId, ailmentTable)
             end
         end
 
@@ -147,9 +193,9 @@ function PetStates.Init()
         return state and state.needs or nil
     end
 
-    local function getRawKinds(pet)
+    local function getActive(pet)
         local state = getState(pet)
-        return state and state.rawKinds or nil
+        return state and state.active or nil
     end
 
     local function debugPetNeeds(pet, source)
@@ -164,39 +210,38 @@ function PetStates.Init()
                 source or "?",
                 "pet=" .. pet.Name,
                 "resolveId=" .. tostring(resolvePetId(pet)),
-                "stateId=nil (no ailments_manager data yet)"
+                "stateId=nil"
             )
             return
         end
         local rawParts = {}
-        for kind in pairs(state.rawKinds or {}) do
-            table.insert(rawParts, kind)
+        for key in pairs(state.active) do
+            table.insert(rawParts, key)
         end
         table.sort(rawParts)
         local needParts = {}
         for _, name in ipairs(TRACKED_AILMENTS) do
-            table.insert(needParts, name .. "=" .. tostring(state.needs[name]))
+            table.insert(needParts, name .. "=" .. tostring(hasNeed(pet, name)))
         end
         print(
             "[PET NEEDS DEBUG]",
             source or "?",
             "pet=" .. pet.Name,
-            "resolveId=" .. tostring(resolvePetId(pet)),
             "stateId=" .. tostring(stateId),
-            "| raw kinds:", #rawParts == 0 and "(none)" or table.concat(rawParts, ", "),
+            "| keys:", table.concat(rawParts, ", "),
             "| " .. table.concat(needParts, " ")
         )
     end
 
-    local api = {
-        CARE_NEEDS = CARE_NEEDS,
+    return {
         TRACKED_AILMENTS = TRACKED_AILMENTS,
+        NEED_ALIASES = NEED_ALIASES,
         PetStateById = PetStateById,
         parseAilmentsManager = parseAilmentsManager,
         subscribe = subscribe,
         getState = getState,
         getNeeds = getNeeds,
-        getRawKinds = getRawKinds,
+        getActive = getActive,
         hasNeed = hasNeed,
         resolvePetId = resolvePetId,
         findStateId = findStateId,
@@ -212,8 +257,6 @@ function PetStates.Init()
             return false
         end,
     }
-
-    return api
 end
 
 return PetStates
