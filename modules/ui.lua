@@ -14,20 +14,39 @@ do
     end
 end
 
-local COLOR_OFF = Color3.fromRGB(255, 80, 80)
-local COLOR_ON = Color3.fromRGB(80, 255, 120)
-local COLOR_MUTED = Color3.fromRGB(180, 180, 190)
+local COLOR_INACTIVE = Color3.fromRGB(120, 125, 138)
+local COLOR_ACTIVE = Color3.fromRGB(96, 165, 250)
+local COLOR_HEADER = Color3.fromRGB(210, 214, 222)
+local COLOR_DIM = Color3.fromRGB(155, 160, 172)
+local COLOR_WARN = Color3.fromRGB(230, 175, 90)
+
+local AILMENT_DISPLAY = {
+    sleepy = "Sleepy",
+    dirty = "Bath",
+    hungry = "Hunger",
+    thirsty = "Thirst",
+    toilet = "Toilet",
+    school = "School",
+    pet_me = "Pet Me",
+    play = "Play",
+    walk = "Walk",
+}
 
 local function setLabel(label, text, color)
     if not label then
         return
     end
     pcall(function()
-        label:Set(text, 0, color or COLOR_MUTED, false)
+        label:Set(text, 0, color or COLOR_DIM, false)
     end)
-    pcall(function()
-        label:Set(text)
-    end)
+end
+
+local function formatNeed(name, active)
+    local title = AILMENT_DISPLAY[name] or name
+    if active then
+        return "●  " .. title .. "  ·  active"
+    end
+    return "○  " .. title .. "  ·  clear"
 end
 
 function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys)
@@ -45,21 +64,16 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys)
     end
 
     Toys = Toys or {
-        parseEquipManager = function() end,
-        ensureInventory = function() end,
-        scanInventory = function() end,
-        findPlayToy = function() end,
-        findThrowableToy = function() end,
-        findToyByKind = function() end,
-        playUntilDone = function() end,
-        throwUntilDone = function() end,
-        walkWithPet = function() end,
-        getToys = function()
-            return {}
+        TOY_ID = "",
+        getToyId = function()
+            return ""
         end,
+        playUntilDone = function() end,
+        throwThreeTimes = function() end,
+        walkWithPet = function() end,
     }
 
-    print("[ui] Init v6 — ailments on Pet Needs tab, kind-based toys")
+    print("[ui] Init v7 — fixed toy id, throw x3")
 
     local player = game:GetService("Players").LocalPlayer
     local HoldBaby = Remotes.HoldBaby
@@ -107,10 +121,8 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys)
         end)
     end
 
-    local function ensureToys()
-        if Toys.ensureInventory then
-            Toys.ensureInventory(player)
-        end
+    local function getToyId()
+        return (Toys.getToyId and Toys.getToyId()) or Toys.TOY_ID or ""
     end
 
     local function stillPlay(pet)
@@ -123,10 +135,6 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys)
 
     local function stillWalk(pet)
         return PetState.isWalk(pet)
-    end
-
-    local function stillThrow(pet)
-        return stillPlay(pet) or PetState.isPetMe(pet)
     end
 
     local function runAction(fn)
@@ -144,7 +152,7 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys)
         Name = "Pet Controller",
         Icon = 0,
         LoadingTitle = "Pet Controller",
-        LoadingSubtitle = "v6",
+        LoadingSubtitle = "v7",
         Theme = "Default",
         ToggleUIKeybind = Enum.KeyCode.F2,
         ConfigurationSaving = {Enabled = true, FolderName = "PetController", FileName = "config"},
@@ -155,48 +163,45 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys)
 
     ControlsTab:CreateSection("Status")
     local StatusLabel = ControlsTab:CreateLabel("Status: Ready")
-    local ToyCountLabel = ControlsTab:CreateLabel("Toys in inventory: 0")
+    local ToyIdLabel = ControlsTab:CreateLabel("Toy ID: —")
 
     local function setStatus(t)
-        setLabel(StatusLabel, "Status: " .. t, COLOR_MUTED)
+        setLabel(StatusLabel, "Status: " .. t, COLOR_DIM)
     end
 
-    local function refreshToyCount()
-        local n = #(Toys.getToys and Toys.getToys() or {})
-        setLabel(ToyCountLabel, "Toys in inventory: " .. n, COLOR_MUTED)
-    end
+    setLabel(ToyIdLabel, "Toy ID: " .. getToyId(), COLOR_DIM)
 
-    NeedsTab:CreateSection("Live ailments")
-    local PetIdLabel = NeedsTab:CreateLabel("Pet ID: —")
-    local AutofarmLabel = NeedsTab:CreateLabel("Active needs: —")
+    NeedsTab:CreateSection("Pet Status")
+    local PetIdLabel = NeedsTab:CreateLabel("Selected: —")
+    local AutofarmLabel = NeedsTab:CreateLabel("Queue: —")
     local ailLabels = {}
     for _, n in ipairs(track) do
-        ailLabels[n] = NeedsTab:CreateLabel(n .. ": false")
+        ailLabels[n] = NeedsTab:CreateLabel(formatNeed(n, false))
     end
-    local RawLabel = NeedsTab:CreateLabel("Raw keys: waiting")
+    local RawLabel = NeedsTab:CreateLabel("Signals: waiting")
 
     local function refreshAilments()
         local pet = getPet()
         if not pet then
-            setLabel(PetIdLabel, "Pet ID: none", COLOR_MUTED)
+            setLabel(PetIdLabel, "Selected: none", COLOR_DIM)
             for _, n in ipairs(track) do
-                setLabel(ailLabels[n], n .. ": false", COLOR_OFF)
+                setLabel(ailLabels[n], formatNeed(n, false), COLOR_INACTIVE)
             end
-            setLabel(RawLabel, "Raw keys: —", COLOR_MUTED)
-            setLabel(AutofarmLabel, "Active needs: —", COLOR_MUTED)
+            setLabel(RawLabel, "Signals: —", COLOR_DIM)
+            setLabel(AutofarmLabel, "Queue: —", COLOR_DIM)
             return
         end
         setLabel(
             PetIdLabel,
-            "Pet: " .. pet.Name .. " | " .. tostring(PetState.findStateId(pet) or "?"),
-            COLOR_MUTED
+            "Selected: " .. pet.Name .. "  |  " .. tostring(PetState.findStateId(pet) or "?"),
+            COLOR_HEADER
         )
         local list = {}
         for _, n in ipairs(track) do
             local on = PetState.hasNeed(pet, n)
-            setLabel(ailLabels[n], n .. ": " .. tostring(on), on and COLOR_ON or COLOR_OFF)
+            setLabel(ailLabels[n], formatNeed(n, on), on and COLOR_ACTIVE or COLOR_INACTIVE)
             if on then
-                table.insert(list, n)
+                table.insert(list, AILMENT_DISPLAY[n] or n)
             end
         end
         local act = PetState.getActive(pet)
@@ -206,14 +211,14 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys)
                 table.insert(k, key)
             end
             table.sort(k)
-            setLabel(RawLabel, "Raw keys: " .. table.concat(k, ", "), COLOR_MUTED)
+            setLabel(RawLabel, "Signals: " .. table.concat(k, ", "), COLOR_DIM)
         else
-            setLabel(RawLabel, "Raw keys: no ailments_manager yet", COLOR_MUTED)
+            setLabel(RawLabel, "Signals: awaiting ailments_manager", COLOR_DIM)
         end
         setLabel(
             AutofarmLabel,
-            "Active needs: " .. (#list > 0 and table.concat(list, ", ") or "none"),
-            COLOR_MUTED
+            "Queue: " .. (#list > 0 and table.concat(list, " → ") or "all clear"),
+            #list > 0 and COLOR_WARN or COLOR_HEADER
         )
     end
 
@@ -223,49 +228,42 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys)
         DataChanged.OnClientEvent:Connect(function(_, dtype, data)
             if dtype == "ailments_manager" then
                 PetState.parseAilmentsManager(data)
-            elseif dtype == "equip_manager" then
-                Toys.parseEquipManager(data)
-                refreshToyCount()
             end
         end)
     end
 
     local function doPlay(pet)
-        ensureToys()
-        local uid, toy
-        local _, playKind = false, nil
-        if PetState.needsPlayToy then
-            _, playKind = PetState.needsPlayToy(pet)
-        end
-        if playKind and Toys.findToyByKind then
-            uid, toy = Toys.findToyByKind(playKind)
-        end
-        if not uid then
-            uid, toy = Toys.findPlayToy()
-        end
-        if not uid then
-            setStatus("No play toy — open toy backpack or wait for equip_manager")
+        local uid = getToyId()
+        if uid == "" then
+            setStatus("Toy ID not set")
             return
         end
-        setStatus("Playing (" .. tostring(toy and (toy.kind or toy.id) or uid) .. ")")
+        if not stillPlay(pet) then
+            setStatus("No play need detected")
+            return
+        end
+        setStatus("Playing squeaky toy")
         Toys.playUntilDone(Remotes, uid, function()
             return stillPlay(pet)
         end)
-        setStatus("Play done")
+        setStatus("Play finished")
     end
 
     local function doThrow(pet)
-        ensureToys()
-        local uid, toy = Toys.findThrowableToy()
-        if not uid then
-            setStatus("No throwable toy in inventory")
+        local uid = getToyId()
+        if uid == "" then
+            setStatus("Toy ID not set")
             return
         end
-        setStatus("Throwing (" .. tostring(toy and (toy.kind or toy.id) or uid) .. ")")
-        Toys.throwUntilDone(Remotes, uid, function()
-            return stillThrow(pet)
+        if not stillPlay(pet) then
+            setStatus("No play need detected")
+            return
+        end
+        setStatus("Throwing toy (3x, 5s apart)")
+        Toys.throwThreeTimes(Remotes, uid, function()
+            return stillPlay(pet)
         end)
-        setStatus("Throw done")
+        setStatus("Throw finished")
     end
 
     local function doWalk(pet)
@@ -334,7 +332,7 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys)
         end
         if stillPlay(pet) then
             runAction(function()
-                doPlay(pet)
+                doThrow(pet)
             end)
             return
         end
@@ -472,16 +470,6 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys)
 
     ControlsTab:CreateSection("Toys")
     ControlsTab:CreateButton({
-        Name = "Sync Toys (scan backpack)",
-        Callback = function()
-            if Toys.scanInventory then
-                Toys.scanInventory(player)
-            end
-            refreshToyCount()
-            setStatus(#(Toys.getToys and Toys.getToys() or {}) > 0 and "Toys synced" or "No toys found")
-        end,
-    })
-    ControlsTab:CreateButton({
         Name = "Play Toy",
         Callback = function()
             local p = getPet()
@@ -546,14 +534,12 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys)
         PetDropdown:Set({o[1]})
     end
 
-    ensureToys()
     refreshAilments()
-    refreshToyCount()
     Rayfield:LoadConfiguration()
     pcall(function()
         Rayfield:Notify({
-            Title = "Loaded v6",
-            Content = "Ailments: Pet Needs tab. Autofarm uses play/walk by kind. Throw Toy until need clears.",
+            Title = "Loaded v7",
+            Content = "Fixed toy ID. Throw = 3x every 5s when play need is active.",
             Duration = 5,
         })
     end)

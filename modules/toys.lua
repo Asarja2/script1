@@ -1,186 +1,15 @@
---// Toy inventory (equip_manager) + equip / play / throw / walk
+--// Fixed toy ID + equip / play / throw / walk
 
 local Toys = {}
 
-local toyList = {}
+-- Your squeaky bone (change here if the unique id changes)
+Toys.TOY_ID = "2_1a3aae15c72c4430bd9824c5e6def466"
 
-local PLAY_KINDS = {
-    squeaky_bone_default = true,
-    play = true,
-}
+local THROW_COUNT = 3
+local THROW_COOLDOWN = 5
 
-local function kindOf(entry)
-    if type(entry) ~= "table" then
-        return ""
-    end
-    return tostring(entry.kind or entry.id or ""):lower()
-end
-
-local function getFiresignal()
-    if typeof(firesignal) == "function" then
-        return firesignal
-    end
-    local g = getgenv and getgenv() or _G
-    if g and typeof(g.firesignal) == "function" then
-        return g.firesignal
-    end
-    if syn and typeof(syn.fire_signal) == "function" then
-        return syn.fire_signal
-    end
-    return nil
-end
-
-local function getNilInstances()
-    if typeof(getnilinstances) == "function" then
-        return getnilinstances
-    end
-    local g = getgenv and getgenv() or _G
-    if g and typeof(g.getnilinstances) == "function" then
-        return g.getnilinstances
-    end
-    return nil
-end
-
-function Toys.parseEquipManager(data)
-    toyList = {}
-    if type(data) ~= "table" or type(data.toys) ~= "table" then
-        return
-    end
-    for _, toy in pairs(data.toys) do
-        if type(toy) == "table" and toy.unique then
-            table.insert(toyList, toy)
-        end
-    end
-end
-
-function Toys.getToys()
-    return toyList
-end
-
--- Backpack / nil tools when equip_manager has not synced yet
-function Toys.scanInventory(player)
-    local found = {}
-    local seen = {}
-    local function add(entry)
-        local uid = entry and entry.unique
-        if uid and not seen[uid] then
-            seen[uid] = true
-            table.insert(found, entry)
-        end
-    end
-
-    local function scanContainer(container)
-        if not container then
-            return
-        end
-        for _, child in ipairs(container:GetChildren()) do
-            if child:IsA("Tool") then
-                local uid = child:GetAttribute("unique")
-                    or child:GetAttribute("UniqueId")
-                    or child:GetAttribute("item_unique")
-                if uid then
-                    local name = child.Name:lower()
-                    add({
-                        unique = tostring(uid),
-                        kind = name,
-                        id = name,
-                        category = "toys",
-                    })
-                end
-            end
-        end
-    end
-
-    if player then
-        scanContainer(player:FindFirstChildOfClass("Backpack"))
-        if player.Character then
-            scanContainer(player.Character)
-        end
-    end
-
-    local nilFn = getNilInstances()
-    if nilFn then
-        for _, inst in ipairs(nilFn()) do
-            if inst:IsA("Tool") then
-                local uid = inst:GetAttribute("unique") or inst:GetAttribute("UniqueId")
-                if uid then
-                    local name = inst.Name:lower()
-                    add({
-                        unique = tostring(uid),
-                        kind = name,
-                        id = name,
-                        category = "toys",
-                    })
-                end
-            end
-        end
-    end
-
-    if #found > 0 then
-        toyList = found
-    end
-    return found
-end
-
-function Toys.ensureInventory(player)
-    if #toyList > 0 then
-        return true
-    end
-    Toys.scanInventory(player)
-    return #toyList > 0
-end
-
-function Toys.findToyByKind(wantedKind)
-    wantedKind = tostring(wantedKind or ""):lower()
-    if wantedKind == "" then
-        return nil, nil
-    end
-    for _, toy in ipairs(toyList) do
-        if kindOf(toy) == wantedKind then
-            return tostring(toy.unique), toy
-        end
-    end
-    return nil, nil
-end
-
-function Toys.findPlayToy()
-    for _, toy in ipairs(toyList) do
-        local k = kindOf(toy)
-        if PLAY_KINDS[k] then
-            return tostring(toy.unique), toy
-        end
-    end
-    for _, toy in ipairs(toyList) do
-        local k = kindOf(toy)
-        if k:find("squeaky", 1, true) then
-            return tostring(toy.unique), toy
-        end
-    end
-    for _, toy in ipairs(toyList) do
-        local k = kindOf(toy)
-        if k:find("bone", 1, true) or k:find("toy", 1, true) then
-            return tostring(toy.unique), toy
-        end
-    end
-    return nil, nil
-end
-
-function Toys.findThrowableToy()
-    for _, toy in ipairs(toyList) do
-        local k = kindOf(toy)
-        if k:find("ball", 1, true)
-            or k:find("frisbee", 1, true)
-            or k:find("throw", 1, true)
-            or k:find("bone", 1, true)
-            or k:find("squeaky", 1, true)
-            or k:find("toy", 1, true) then
-            return tostring(toy.unique), toy
-        end
-    end
-    if #toyList > 0 then
-        return tostring(toyList[1].unique), toyList[1]
-    end
-    return nil, nil
+function Toys.getToyId()
+    return Toys.TOY_ID
 end
 
 function Toys.equip(Remotes, uniqueId)
@@ -223,11 +52,36 @@ function Toys.throwToy(Remotes, uniqueId)
     end)
 end
 
--- Cobalt play flow: equip → START → hold until need clears → END → unequip
-function Toys.playUntilDone(Remotes, uniqueId, stillNeedsFn)
-    if not uniqueId then
-        return false, "no toy"
+-- Cobalt throw: equip → ThrowToyReaction → unequip (from_throw_toy)
+function Toys.throwOnce(Remotes, uniqueId)
+    uniqueId = uniqueId or Toys.TOY_ID
+    Toys.equip(Remotes, uniqueId)
+    task.wait(0.35)
+    Toys.throwToy(Remotes, uniqueId)
+    task.wait(0.4)
+    Toys.unequip(Remotes, uniqueId, true)
+end
+
+-- 3 throws, 5 seconds between each (when play need is active)
+function Toys.throwThreeTimes(Remotes, uniqueId, stillNeedsFn)
+    uniqueId = uniqueId or Toys.TOY_ID
+    for i = 1, THROW_COUNT do
+        if stillNeedsFn and not stillNeedsFn() then
+            break
+        end
+        pcall(function()
+            Toys.throwOnce(Remotes, uniqueId)
+        end)
+        if i < THROW_COUNT then
+            task.wait(THROW_COOLDOWN)
+        end
     end
+    return true
+end
+
+-- Cobalt play: equip → START → hold until need clears → END → unequip
+function Toys.playUntilDone(Remotes, uniqueId, stillNeedsFn)
+    uniqueId = uniqueId or Toys.TOY_ID
     Toys.equip(Remotes, uniqueId)
     task.wait(0.35)
     Toys.useStart(Remotes, uniqueId)
@@ -241,63 +95,58 @@ function Toys.playUntilDone(Remotes, uniqueId, stillNeedsFn)
     return true
 end
 
--- Cobalt throw flow: equip → START → throw reaction → unequip (throw) → unequip
-function Toys.throwOnce(Remotes, uniqueId)
-    Toys.equip(Remotes, uniqueId)
-    task.wait(0.3)
-    Toys.useStart(Remotes, uniqueId)
-    task.wait(0.15)
-    Toys.throwToy(Remotes, uniqueId)
-    task.wait(0.8)
-    Toys.useEnd(Remotes, uniqueId)
-    task.wait(0.2)
-    Toys.unequip(Remotes, uniqueId, true)
-    task.wait(0.15)
-    Toys.unequip(Remotes, uniqueId, nil)
-end
+local WALK_KEYS = {
+    Enum.KeyCode.W,
+    Enum.KeyCode.A,
+    Enum.KeyCode.S,
+    Enum.KeyCode.D,
+}
 
-function Toys.throwUntilDone(Remotes, uniqueId, stillNeedsFn)
-    if not uniqueId then
-        return false, "no toy"
-    end
-    local timeout = os.clock() + 60
-    while stillNeedsFn() and os.clock() < timeout do
-        pcall(function()
-            Toys.throwOnce(Remotes, uniqueId)
-        end)
-        task.wait(1.1)
-    end
-    return true
-end
+-- Short taps so movement steers around walls instead of MoveTo into them
+local KEY_HOLD = 0.16
+local KEY_GAP = 0.03
+local BURST_COUNT = 8
 
 local function pressKey(keyCode, down)
-    local ok = pcall(function()
-        local VIM = game:GetService("VirtualInputManager")
-        VIM:SendKeyEvent(down, keyCode, false, game)
+    pcall(function()
+        game:GetService("VirtualInputManager"):SendKeyEvent(down, keyCode, false, game)
     end)
-    return ok
 end
 
-local function walkStep(hum, root, seconds)
-    if hum and root then
-        local offset = Vector3.new(math.random(-18, 18), 0, math.random(-18, 18))
-        pcall(function()
-            hum:MoveTo(root.Position + offset)
-        end)
+local function releaseAllKeys()
+    for _, key in ipairs(WALK_KEYS) do
+        pressKey(key, false)
     end
-    local keys = {
-        Enum.KeyCode.W,
-        Enum.KeyCode.A,
-        Enum.KeyCode.S,
-        Enum.KeyCode.D,
-    }
-    local key = keys[math.random(1, #keys)]
-    pressKey(key, true)
-    task.wait(seconds or 1.8)
-    pressKey(key, false)
 end
 
--- Hold pet and walk (MoveTo + WASD fallback) until walk ailment clears
+local function tapKey(keyCode)
+    pressKey(keyCode, true)
+    task.wait(KEY_HOLD)
+    pressKey(keyCode, false)
+    task.wait(KEY_GAP)
+end
+
+local function nextWalkKey()
+    -- Favor forward + strafe so we circle obstacles instead of ramming walls
+    local roll = math.random(1, 10)
+    if roll <= 5 then
+        return Enum.KeyCode.W
+    elseif roll <= 7 then
+        return math.random(1, 2) == 1 and Enum.KeyCode.A or Enum.KeyCode.D
+    elseif roll == 8 then
+        return Enum.KeyCode.S
+    end
+    return WALK_KEYS[math.random(1, #WALK_KEYS)]
+end
+
+local function walkBurst()
+    releaseAllKeys()
+    for _ = 1, BURST_COUNT do
+        tapKey(nextWalkKey())
+    end
+    releaseAllKeys()
+end
+
 function Toys.walkWithPet(player, HoldBaby, pet, stillNeedsFn)
     if not pet then
         return false
@@ -305,23 +154,23 @@ function Toys.walkWithPet(player, HoldBaby, pet, stillNeedsFn)
     pcall(function()
         HoldBaby:FireServer(pet)
     end)
-    task.wait(0.45)
+    task.wait(0.35)
 
     local char = player.Character
-    local hum = char and char:FindFirstChildOfClass("Humanoid")
-    local root = char and char:FindFirstChild("HumanoidRootPart")
-    if not hum or not root then
+    if not char or not char:FindFirstChildOfClass("Humanoid") then
         return false
     end
 
     local timeout = os.clock() + 70
     while stillNeedsFn() and os.clock() < timeout do
-        walkStep(hum, root, 2)
+        walkBurst()
         pcall(function()
             HoldBaby:FireServer(pet)
         end)
-        task.wait(0.35)
+        task.wait(0.12)
     end
+
+    releaseAllKeys()
     return true
 end
 
