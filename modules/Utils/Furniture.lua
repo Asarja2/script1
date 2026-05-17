@@ -14,9 +14,12 @@ function Furniture.Init(player, ActivateFurniture, Helpers)
         end
     end
 
-    local function performFurnitureActivation(furnitureId, target, partName, actionLabel)
+    local function performFurnitureActivation(furnitureId, target, partName, actionLabel, pet)
         if not furnitureId or not target then
             return false, "No furniture found"
+        end
+        if not pet or not pet:IsA("Model") then
+            return false, "No pet selected"
         end
 
         local targetCFrame = Helpers.resolveCFrame(target, partName)
@@ -24,21 +27,17 @@ function Furniture.Init(player, ActivateFurniture, Helpers)
             return false, "Invalid furniture position"
         end
 
-        print("DEBUG ACTION", actionLabel, "furnitureId=", furnitureId, "target=", target:GetFullName())
+        print("DEBUG ACTION", actionLabel, "furnitureId=", furnitureId, "pet=", pet.Name)
         teleportToTarget(targetCFrame)
 
-        local args = {
-            player,
-            furnitureId,
-            partName,
-            {
-                cframe = targetCFrame
-            },
-            target
-        }
-
         local ok, err = pcall(function()
-            ActivateFurniture:InvokeServer(unpack(args))
+            ActivateFurniture:InvokeServer(
+                player,
+                furnitureId,
+                partName,
+                {cframe = targetCFrame},
+                pet
+            )
         end)
 
         if not ok then

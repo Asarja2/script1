@@ -45,50 +45,15 @@ function UI.Init(Pets, Sleep, Care, Remotes)
     local ReplicateActiveReactions = Remotes.ReplicateActiveReactions
     local DataChanged = Remotes.DataChanged
     local handleDataChanged
-    local handleDataChangedGuard = false
 
     --// Initialize modules
     local petStates = PetStates.Init()
     local taskQueue = TaskQueue.Init()
-    local AILMENT_MAPPINGS = {
-        hungry = {"hungry", "feed", "needsfood", "needs_food", "hunger", "starving"},
-        thirsty = {"thirsty", "needsdrink", "drink", "thirst", "needs_drink"},
-        dirty = {"dirty", "stinky", "stink", "needsbath", "needs_bath", "bath"},
-        toilet = {"toilet", "pee", "poop", "restroom"},
-        sleepy = {"sleepy", "tired", "needsleep", "needs_sleep", "sleep"},
-        school = {"school"},
-        pet_me = {"pet_me", "petme", "pet"},
-    }
-    local detection = Detection.Init(petStates.PetAilmentCache, petStates.PetState, AILMENT_MAPPINGS)
+    local detection = Detection.Init(petStates.PetAilmentCache, petStates.PetState)
     local furniture = Furniture.Init(player, ActivateFurniture, Helpers)
     local status = UIStatus.Init(detection)
 
     local dataChangedAutofarmThrottle = setmetatable({}, {__mode = "k"})
-
-    local function interceptDataChangedEvent()
-        if typeof(DataChanged) ~= "Instance" or not DataChanged:IsA("RemoteEvent") then
-            return
-        end
-
-        if type(getconnections) == "function" and type(hookfunction) == "function" then
-            for _, connection in ipairs(getconnections(DataChanged.OnClientEvent) or {}) do
-                if connection and connection.Function then
-                    local old = connection.Function
-                    hookfunction(old, function(...)
-                        if handleDataChanged then
-                            local ok, err = pcall(handleDataChanged, ...)
-                            if not ok then
-                                warn("DataChanged intercept failed:", err)
-                            end
-                        end
-                        return old(...)
-                    end)
-                end
-            end
-        end
-    end
-
-    interceptDataChangedEvent()
 
     local successHook, hookErr = pcall(function()
         local mt = getrawmetatable(game)
@@ -208,6 +173,11 @@ function UI.Init(Pets, Sleep, Care, Remotes)
         status.refreshSelectedPetStatus(pet)
     end
 
+    local function activateForPet(furnitureId, target, partName, label, pet)
+        pet = pet or resolveSelectedPet()
+        return furniture.performFurnitureActivation(furnitureId, target, partName, label, pet)
+    end
+
     --// Debug Remote Listeners
     if ReplicatePerformanceModifiers and ReplicatePerformanceModifiers:IsA("RemoteEvent") then
         ReplicatePerformanceModifiers.OnClientEvent:Connect(function(pet, data)
@@ -257,124 +227,34 @@ function UI.Init(Pets, Sleep, Care, Remotes)
 
     if DataChanged and DataChanged:IsA("RemoteEvent") then
         handleDataChanged = function(playerName, dataType, data, timestamp)
-            if handleDataChangedGuard then
+            if dataType ~= "ailments_manager" or type(data) ~= "table" then
                 return
             end
-            handleDataChangedGuard = true
-            if dataType ~= "ailments_manager" then
-                handleDataChangedGuard = false
+            petStates.syncFromAilmentsManager(data)
+            local selected = resolveSelectedPet()
+            if not selected then
                 return
             end
-            if type(data) ~= "table" then
-                handleDataChangedGuard = false
-                return
-            end
-
-            local ailments = data.ailments
-            if type(ailments) ~= "table" then
-                handleDataChangedGuard = false
-                return
-            end
-
-            for petId, ailmentTable in pairs(ailments) do
-                local normalized = petStates.updateAilmentCache(petId, ailmentTable)
-
-                for ailmentName, _ in pairs(ailmentTable) do
-                    print("PET:", petId, "AILMENT:", ailmentName)
+            detection.debugPetNeeds(selected, "ailments_manager")
+            refreshSelectedPetStatus()
+            if autofarmEnabled then
+                if detection.isToilet(selected) then
+                    taskQueue.queueAutofarmTask("toilet", selected)
                 end
-
-                -- derive mapped logical states (hungry/thirsty/etc) from arbitrary ailment keys
-                local mappedState = {}
-                for logicalName, keys in pairs(AILMENT_MAPPINGS) do
-                    for _, k in ipairs(keys) do
-                        if normalized[tostring(k):lower()] then
-                            mappedState[logicalName] = true
-                            break
-                        end
-                    end
+                if detection.isDirty(selected) then
+                    taskQueue.queueAutofarmTask("shower", selected)
                 end
-
-                -- try to resolve the pet model from the petId
-                local petModel = nil
-                for _, p in ipairs(Pets.GetPets()) do
-                    local id = tostring(p:GetAttribute("unique") or p:GetAttribute("id") or p.Name)
-                    if id and tostring(id) == tostring(petId) then
-                        petModel = p
-                        break
-                    end
+                if detection.isSleepy(selected) then
+                    taskQueue.queueAutofarmTask("sleep", selected)
                 end
-
-                local selected = resolveSelectedPet()
-                if not petModel and selected then
-                    local currentId = tostring(selected:GetAttribute("unique") or selected:GetAttribute("id") or selected.Name)
-                    if tostring(currentId) == tostring(petId) then
-                        petModel = selected
-                    end
-                end
-
-                if petModel then
-                    local hasDirty = normalized["dirty"] or normalized["stinky"] or normalized["stink"]
-                    local hasSleepy = normalized["sleepy"]
-                    local hasToilet = normalized["toilet"]
-
-                    petStates.markPetDirty(petModel, hasDirty and true or false)
-                    petStates.markPetSleepy(petModel, hasSleepy and true or false)
-                    petStates.markPetToilet(petModel, hasToilet and true or false)
-
-                    if next(mappedState) then
-                        petStates.updatePetState(petModel, mappedState)
-                    end
-
-                    if selected and selected == petModel then
-                        detection.debugPetNeeds(petModel, "ailments_manager")
-                        refreshSelectedPetStatus()
-                        if autofarmEnabled then
-                            if mappedState["toilet"] or hasToilet then
-                                taskQueue.queueAutofarmTask("toilet", petModel)
-                            end
-                            if mappedState["dirty"] or hasDirty then
-                                taskQueue.queueAutofarmTask("shower", petModel)
-                            end
-                            if mappedState["sleepy"] or hasSleepy then
-                                taskQueue.queueAutofarmTask("sleep", petModel)
-                            end
-                            local last = dataChangedAutofarmThrottle[selected]
-                            if not last or (time() - last) > 2 then
-                                dataChangedAutofarmThrottle[selected] = time()
-                                task.spawn(function()
-                                    local ok, err = pcall(runAutofarmOnce)
-                                    if not ok then
-                                        warn("AUTOFARM DATACHANGE ERROR", err)
-                                    end
-                                end)
-                            end
-                        end
-                    end
-                else
-                    if selected then
-                        local currentId = tostring(selected:GetAttribute("unique") or selected:GetAttribute("id") or selected.Name)
-                        if tostring(currentId) == tostring(petId) then
-                            if next(mappedState) then
-                                petStates.updatePetState(selected, mappedState)
-                            end
-                            refreshSelectedPetStatus()
-                            if autofarmEnabled then
-                                local last = dataChangedAutofarmThrottle[selected]
-                                if not last or (time() - last) > 2 then
-                                    dataChangedAutofarmThrottle[selected] = time()
-                                    task.spawn(function()
-                                        local ok, err = pcall(runAutofarmOnce)
-                                        if not ok then
-                                            warn("AUTOFARM DATACHANGE ERROR", err)
-                                        end
-                                    end)
-                                end
-                            end
-                        end
-                    end
+                local last = dataChangedAutofarmThrottle[selected]
+                if not last or (time() - last) > 2 then
+                    dataChangedAutofarmThrottle[selected] = time()
+                    task.spawn(function()
+                        pcall(runAutofarmOnce)
+                    end)
                 end
             end
-            handleDataChangedGuard = false
         end
 
         DataChanged.OnClientEvent:Connect(function(...)
@@ -382,6 +262,7 @@ function UI.Init(Pets, Sleep, Care, Remotes)
                 pcall(handleDataChanged, ...)
             end
         end)
+        print("Ailment detection: DataAPI/DataChanged (kind field)")
     end
 
     --// Pet Dropdown
@@ -514,7 +395,7 @@ function UI.Init(Pets, Sleep, Care, Remotes)
         refreshSelectedPetStatus()
 
         task.spawn(function()
-            local success, err = furniture.performFurnitureActivation(furnitureId, obj, "UseBlock", "shower")
+            local success, err = activateForPet(furnitureId, obj, "UseBlock", "shower", pet)
             if not success then
                 warn("AUTO SHOWER ERROR", err)
                 status.updateStatus("Auto shower failed")
@@ -610,7 +491,7 @@ function UI.Init(Pets, Sleep, Care, Remotes)
         refreshSelectedPetStatus()
 
         task.spawn(function()
-            local success, err = furniture.performFurnitureActivation(furnitureId, seat, "Seat1", "bed")
+            local success, err = activateForPet(furnitureId, seat, "Seat1", "bed", pet)
             if not success then
                 warn("AUTO SLEEP ERROR", err)
                 status.updateStatus("Auto sleep failed")
@@ -633,7 +514,7 @@ function UI.Init(Pets, Sleep, Care, Remotes)
         markAutoToilet(pet)
 
         task.spawn(function()
-            local success, err = furniture.performFurnitureActivation(furnitureId, seat, "Seat1", "toilet")
+            local success, err = activateForPet(furnitureId, seat, "Seat1", "toilet", pet)
             if not success then
                 warn("AUTO TOILET ERROR", err)
                 status.updateStatus("Auto toilet failed")
@@ -644,75 +525,74 @@ function UI.Init(Pets, Sleep, Care, Remotes)
     end
 
     function runAutofarmOnce()
-        if not selectedPet then
+        local pet = resolveSelectedPet()
+        if not pet then
             return false, "No pet selected"
         end
 
         status.updateStatus("Checking pet needs...")
-        local needs = getNeedsState(selectedPet)
-        detection.debugPetNeeds(selectedPet, "autofarm")
+        detection.debugPetNeeds(pet, "autofarm")
 
-        if detection.isSleeping(selectedPet) then
-            status.updateStatus(selectedPet.Name .. " is already sleeping")
+        if detection.isSleeping(pet) then
+            status.updateStatus(pet.Name .. " is already sleeping")
             return true
         end
 
-        if detection.isHungry(selectedPet) then
+        if detection.isHungry(pet) then
             status.updateStatus("Pet is hungry, teleporting to food...")
             local furnitureId, obj = Care.FindFood()
-            local success, err = furniture.performFurnitureActivation(furnitureId, obj, "UseBlock", "food")
+            local success, err = activateForPet(furnitureId, obj, "UseBlock", "food", pet)
             if not success then
                 return false, err
             end
-            status.updateStatus(selectedPet.Name .. " is eating")
+            status.updateStatus(pet.Name .. " is eating")
             return true
         end
 
-        if detection.isThirsty(selectedPet) then
+        if detection.isThirsty(pet) then
             status.updateStatus("Pet is thirsty, teleporting to drink...")
             local furnitureId, obj = Care.FindDrink()
-            local success, err = furniture.performFurnitureActivation(furnitureId, obj, "UseBlock", "drink")
+            local success, err = activateForPet(furnitureId, obj, "UseBlock", "drink", pet)
             if not success then
                 return false, err
             end
-            status.updateStatus(selectedPet.Name .. " is drinking")
+            status.updateStatus(pet.Name .. " is drinking")
             return true
         end
 
-        if needs.toilet then
+        if detection.isToilet(pet) then
             status.updateStatus("Pet needs toilet, teleporting to restroom...")
-            local furnitureId, obj = Care.FindToilet()
-            local success, err = furniture.performFurnitureActivation(furnitureId, obj, "Seat1", "toilet")
+            local furnitureId, seat = Care.FindToilet()
+            local success, err = activateForPet(furnitureId, seat, "Seat1", "toilet", pet)
             if not success then
                 warn("AUTOFARM TOILET ERROR", err)
                 return false, err
             end
-            petStates.markPetToilet(selectedPet, false)
             refreshSelectedPetStatus()
-            status.updateStatus(selectedPet.Name .. " is using the toilet")
+            status.updateStatus(pet.Name .. " is using the toilet")
             return true
         end
 
-        if detection.isDirty(selectedPet) then
+        if detection.isDirty(pet) then
             status.updateStatus("Pet is dirty, teleporting to shower...")
             local furnitureId, obj = Care.FindShower()
-            local success, err = furniture.performFurnitureActivation(furnitureId, obj, "UseBlock", "shower")
+            local success, err = activateForPet(furnitureId, obj, "UseBlock", "shower", pet)
             if not success then
                 warn("AUTOFARM SHOWER ERROR", err)
                 return false, err
             end
-            status.updateStatus(selectedPet.Name .. " is showering")
+            status.updateStatus(pet.Name .. " is showering")
             return true
         end
 
-        if detection.isSleepy(selectedPet) then
+        if detection.isSleepy(pet) then
             status.updateStatus("Pet is sleepy, teleporting to bed...")
             local furnitureId, seat = Sleep.FindBed()
-            local success, err = furniture.performFurnitureActivation(furnitureId, seat, "Seat1", "bed")
+            local success, err = activateForPet(furnitureId, seat, "Seat1", "bed", pet)
             if not success then
                 return false, err
             end
-            status.updateStatus(selectedPet.Name .. " is sleeping")
+            status.updateStatus(pet.Name .. " is sleeping")
             return true
         end
 
@@ -839,9 +719,8 @@ function UI.Init(Pets, Sleep, Care, Remotes)
                 status.updateStatus("No valid bed found")
                 return
             end
-            local ok, err = pcall(function()
-                furniture.performFurnitureActivation(furnitureId, seat, "Seat1", "bed")
-            end)
+            local pet = resolveSelectedPet()
+            local ok, err = activateForPet(furnitureId, seat, "Seat1", "bed", pet)
             if not ok then
                 status.updateStatus("Sleep request failed")
                 warn("SLEEP REQUEST ERROR", err)
@@ -864,9 +743,8 @@ function UI.Init(Pets, Sleep, Care, Remotes)
                 status.updateStatus("No food found")
                 return
             end
-            local ok, err = pcall(function()
-                furniture.performFurnitureActivation(furnitureId, obj, "UseBlock", "food")
-            end)
+            local pet = resolveSelectedPet()
+            local ok, err = activateForPet(furnitureId, obj, "UseBlock", "food", pet)
             if not ok then
                 status.updateStatus("Feed request failed")
                 return
@@ -888,9 +766,8 @@ function UI.Init(Pets, Sleep, Care, Remotes)
                 status.updateStatus("No drink found")
                 return
             end
-            local ok, err = pcall(function()
-                furniture.performFurnitureActivation(furnitureId, obj, "UseBlock", "drink")
-            end)
+            local pet = resolveSelectedPet()
+            local ok, err = activateForPet(furnitureId, obj, "UseBlock", "drink", pet)
             if not ok then
                 status.updateStatus("Drink request failed")
                 return
@@ -912,9 +789,8 @@ function UI.Init(Pets, Sleep, Care, Remotes)
                 status.updateStatus("No shower found")
                 return
             end
-            local ok, err = pcall(function()
-                furniture.performFurnitureActivation(furnitureId, obj, "UseBlock", "shower")
-            end)
+            local pet = resolveSelectedPet()
+            local ok, err = activateForPet(furnitureId, obj, "UseBlock", "shower", pet)
             if not ok then
                 status.updateStatus("Shower request failed")
                 return

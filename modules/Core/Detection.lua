@@ -1,20 +1,79 @@
---// Ailment Detection Module
---// Detects pet ailments from ailments_manager cache + pet state fallbacks
+--// Ailment Detection — reads ailments_manager cache (kind / ailment_key)
 
 local Detection = {}
 
-local DEFAULT_MAPPINGS = {
-    hungry = {"hungry", "feed", "needsfood", "needs_food", "hunger", "starving"},
-    thirsty = {"thirsty", "needsdrink", "drink", "thirst", "needs_drink"},
-    dirty = {"dirty", "stinky", "stink", "needsbath", "needs_bath", "bath"},
-    toilet = {"toilet", "pee", "poop", "restroom"},
-    sleepy = {"sleepy", "tired", "needsleep", "needs_sleep", "sleep"},
-    school = {"school"},
-    pet_me = {"pet_me", "petme", "pet"},
+local TRACKED_AILMENTS = {
+    "sleepy",
+    "dirty",
+    "hungry",
+    "thirsty",
+    "toilet",
+    "school",
+    "pet_me",
 }
 
-function Detection.Init(PetAilmentCache, PetState, ailmentMappings)
-    local MAPPINGS = ailmentMappings or DEFAULT_MAPPINGS
+function Detection.Init(PetAilmentCache, PetState)
+    local function resolvePetId(pet)
+        if not pet or not pet:IsA("Model") then
+            return nil
+        end
+        return tostring(pet:GetAttribute("unique") or pet:GetAttribute("id") or pet.Name)
+    end
+
+    local function getCacheForPet(pet)
+        if not pet then
+            return nil
+        end
+        local candidates = {}
+        local unique = pet:GetAttribute("unique")
+        local id = pet:GetAttribute("id")
+        if unique then table.insert(candidates, tostring(unique)) end
+        if id then table.insert(candidates, tostring(id)) end
+        table.insert(candidates, pet.Name)
+
+        for _, candidate in ipairs(candidates) do
+            if PetAilmentCache[candidate] then
+                return PetAilmentCache[candidate], candidate
+            end
+        end
+
+        for cacheId, cache in pairs(PetAilmentCache) do
+            local cacheStr = tostring(cacheId)
+            for _, candidate in ipairs(candidates) do
+                if cacheStr == candidate then
+                    return cache, cacheId
+                end
+            end
+        end
+
+        local cacheCount, onlyCache, onlyId = 0, nil, nil
+        for cacheId, cache in pairs(PetAilmentCache) do
+            cacheCount = cacheCount + 1
+            onlyCache = cache
+            onlyId = cacheId
+        end
+        if cacheCount == 1 then
+            return onlyCache, onlyId
+        end
+
+        return nil, nil
+    end
+
+    local function cacheHas(cache, ailmentName)
+        if type(cache) ~= "table" then
+            return false
+        end
+        return cache[tostring(ailmentName):lower()] == true
+    end
+
+    local function petHasAilment(pet, ailmentName)
+        local cache = getCacheForPet(pet)
+        return cacheHas(cache, ailmentName)
+    end
+
+    local function isNeed(pet, needName)
+        return petHasAilment(pet, needName)
+    end
 
     local function getPetState(pet)
         if not pet then
@@ -23,145 +82,22 @@ function Detection.Init(PetAilmentCache, PetState, ailmentMappings)
         return PetState[pet]
     end
 
-    local function resolvePetId(pet)
-        if not pet or not pet:IsA("Model") then
-            return nil
-        end
-        return tostring(pet:GetAttribute("unique") or pet:GetAttribute("id") or pet.Name)
-    end
-
-    local function stateHasAny(pet, keys)
+    local function isSleeping(pet)
         local state = getPetState(pet)
         if not state then
             return false
         end
-        for _, key in ipairs(keys) do
-            local normalizedKey = tostring(key):lower()
-            for stateKey, stateValue in pairs(state) do
-                if tostring(stateKey):lower() == normalizedKey and stateValue then
-                    return true
-                end
-            end
-        end
-        return false
-    end
-
-    local function stateHasEffect(pet, effectNames)
-        local state = getPetState(pet)
-        if not state then
-            return false
-        end
-        local effects = state.effects
-        if type(effects) == "table" then
-            for _, effect in ipairs(effects) do
-                for _, name in ipairs(effectNames) do
-                    if tostring(effect):lower() == tostring(name):lower() then
-                        return true
-                    end
-                end
-            end
-        elseif type(effects) == "string" then
-            for _, name in ipairs(effectNames) do
-                if tostring(effects):lower() == tostring(name):lower() then
-                    return true
-                end
-            end
-        end
-        return false
-    end
-
-    local function petHasAilment(pet, ailmentName, petId)
-        if not pet or type(ailmentName) ~= "string" then
-            return false
-        end
-
-        petId = petId or resolvePetId(pet)
-        if not petId then
-            return false
-        end
-
-        local cache = PetAilmentCache[petId]
-        if type(cache) ~= "table" then
-            return false
-        end
-
-        return cache[tostring(ailmentName):lower()] ~= nil
-    end
-
-    local function checkMapped(pet, category)
-        local keys = MAPPINGS[category]
-        if not keys then
-            return false
-        end
-        for _, key in ipairs(keys) do
-            if petHasAilment(pet, key) then
+        for key, value in pairs(state) do
+            if value and tostring(key):lower():match("sleep|asleep|focus") then
                 return true
             end
         end
         return false
     end
 
-    local function isDirty(pet)
-        if checkMapped(pet, "dirty") then
-            return true
-        end
-        if stateHasAny(pet, {"Dirty", "Stinky", "NeedsBath", "Bath"}) then
-            return true
-        end
-        if stateHasEffect(pet, {"dirty", "stinky"}) then
-            return true
-        end
-        return false
-    end
-
-    local function isSleepy(pet)
-        if checkMapped(pet, "sleepy") then
-            return true
-        end
-        if stateHasAny(pet, {"Sleepy", "Tired", "NeedsSleep", "Sleep"}) then
-            return true
-        end
-        if stateHasEffect(pet, {"sleepy", "tired", "sleep"}) then
-            return true
-        end
-        return false
-    end
-
-    local function isHungry(pet)
-        return checkMapped(pet, "hungry")
-    end
-
-    local function isThirsty(pet)
-        return checkMapped(pet, "thirsty")
-    end
-
-    local function isToilet(pet)
-        if checkMapped(pet, "toilet") then
-            return true
-        end
-        if stateHasAny(pet, {"Toilet", "Pee", "Poop", "Restroom"}) then
-            return true
-        end
-        if stateHasEffect(pet, {"toilet", "pee", "poop"}) then
-            return true
-        end
-        return false
-    end
-
-    local function isSleeping(pet)
-        if stateHasAny(pet, {"sleeping", "Sleeping", "Asleep", "asleep", "Sleep", "FallAsleep", "FocusPet", "SleepLoop"}) then
-            return true
-        end
-        return false
-    end
-
     local function getActiveCacheKeys(pet)
-        local petId = resolvePetId(pet)
-        if not petId then
-            return {}
-        end
-        local cache = PetAilmentCache[petId]
-        if type(cache) ~= "table" then
+        local cache = getCacheForPet(pet)
+        if not cache then
             return {}
         end
         local keys = {}
@@ -172,42 +108,51 @@ function Detection.Init(PetAilmentCache, PetState, ailmentMappings)
         return keys
     end
 
+    local function getTrackedNeeds(pet)
+        local out = {}
+        for _, name in ipairs(TRACKED_AILMENTS) do
+            out[name] = isNeed(pet, name)
+        end
+        return out
+    end
+
     local function debugPetNeeds(pet, source)
         if not pet then
             print("[PET NEEDS DEBUG]", source or "?", "no pet")
             return
         end
-        local petId = resolvePetId(pet)
-        local cacheKeys = table.concat(getActiveCacheKeys(pet), ", ")
+        local cache, cacheId = getCacheForPet(pet)
+        local keys = table.concat(getActiveCacheKeys(pet), ", ")
+        local needs = getTrackedNeeds(pet)
+        local parts = {}
+        for _, name in ipairs(TRACKED_AILMENTS) do
+            table.insert(parts, name .. "=" .. tostring(needs[name]))
+        end
         print(
             "[PET NEEDS DEBUG]",
             source or "?",
             "pet=" .. pet.Name,
-            "id=" .. tostring(petId),
-            "| cache:", cacheKeys == "" and "(empty)" or cacheKeys,
-            "| hungry=" .. tostring(isHungry(pet)),
-            "thirsty=" .. tostring(isThirsty(pet)),
-            "dirty=" .. tostring(isDirty(pet)),
-            "sleepy=" .. tostring(isSleepy(pet)),
-            "toilet=" .. tostring(isToilet(pet)),
-            "sleeping=" .. tostring(isSleeping(pet))
+            "resolveId=" .. tostring(resolvePetId(pet)),
+            "cacheId=" .. tostring(cacheId),
+            "| keys:", keys == "" and "(empty)" or keys,
+            "| " .. table.concat(parts, " ")
         )
     end
 
     return {
-        isDirty = isDirty,
-        isSleepy = isSleepy,
-        isHungry = isHungry,
-        isThirsty = isThirsty,
-        isToilet = isToilet,
+        TRACKED_AILMENTS = TRACKED_AILMENTS,
+        isDirty = function(pet) return isNeed(pet, "dirty") end,
+        isSleepy = function(pet) return isNeed(pet, "sleepy") end,
+        isHungry = function(pet) return isNeed(pet, "hungry") end,
+        isThirsty = function(pet) return isNeed(pet, "thirsty") end,
+        isToilet = function(pet) return isNeed(pet, "toilet") end,
         isSleeping = isSleeping,
         petHasAilment = petHasAilment,
-        checkMapped = checkMapped,
-        stateHasAny = stateHasAny,
-        stateHasEffect = stateHasEffect,
-        getPetState = getPetState,
+        getCacheForPet = getCacheForPet,
+        getTrackedNeeds = getTrackedNeeds,
         getActiveCacheKeys = getActiveCacheKeys,
         debugPetNeeds = debugPetNeeds,
+        getPetState = getPetState,
     }
 end
 

@@ -3,6 +3,16 @@
 
 local PetStates = {}
 
+local TRACKED_AILMENTS = {
+    "sleepy",
+    "dirty",
+    "hungry",
+    "thirsty",
+    "toilet",
+    "school",
+    "pet_me",
+}
+
 function PetStates.Init()
     local PetAilmentCache = {}
     local PetState = setmetatable({}, {__mode = "k"})
@@ -33,23 +43,21 @@ function PetStates.Init()
         end
     end
 
-    local function collectAilmentKeys(ailmentData, normalized)
+    local function ingestAilmentEntry(normalized, ailmentName, ailmentData)
+        addAilmentKey(normalized, ailmentName)
         if type(ailmentData) ~= "table" then
             return
         end
-        if ailmentData.ailment_key then
-            addAilmentKey(normalized, ailmentData.ailment_key)
-        end
-        if ailmentData.kind then
-            addAilmentKey(normalized, ailmentData.kind)
-        end
-        if ailmentData.ailment_name then
-            addAilmentKey(normalized, ailmentData.ailment_name)
-        end
+        addAilmentKey(normalized, ailmentData.kind)
+        addAilmentKey(normalized, ailmentData.ailment_key)
+        addAilmentKey(normalized, ailmentData.ailment_name)
         if type(ailmentData.components) == "table" then
             for subName, subData in pairs(ailmentData.components) do
                 addAilmentKey(normalized, subName)
-                collectAilmentKeys(subData, normalized)
+                if type(subData) == "table" then
+                    addAilmentKey(normalized, subData.kind)
+                    addAilmentKey(normalized, subData.ailment_key)
+                end
             end
         end
     end
@@ -110,13 +118,24 @@ function PetStates.Init()
         end
         local normalized = {}
         for ailmentName, ailmentData in pairs(ailmentTable) do
-            local lower = tostring(ailmentName):lower()
-            normalized[lower] = true
-            addAilmentKey(normalized, lower)
-            collectAilmentKeys(ailmentData, normalized)
+            ingestAilmentEntry(normalized, ailmentName, ailmentData)
+            if type(ailmentData) == "table" and ailmentData.kind then
+                print("PET:", petId, "AILMENT kind=", ailmentData.kind)
+            else
+                print("PET:", petId, "AILMENT:", ailmentName)
+            end
         end
         PetAilmentCache[tostring(petId)] = normalized
         return normalized
+    end
+
+    local function syncFromAilmentsManager(data)
+        if type(data) ~= "table" or type(data.ailments) ~= "table" then
+            return
+        end
+        for petId, ailmentTable in pairs(data.ailments) do
+            updateAilmentCache(petId, ailmentTable)
+        end
     end
 
     return {
@@ -124,13 +143,15 @@ function PetStates.Init()
         PetState = PetState,
         dirtyPetState = dirtyPetState,
         sleepyPetState = sleepyPetState,
+        TRACKED_AILMENTS = TRACKED_AILMENTS,
         updatePetState = updatePetState,
         addAilmentKey = addAilmentKey,
-        collectAilmentKeys = collectAilmentKeys,
+        ingestAilmentEntry = ingestAilmentEntry,
         markPetDirty = markPetDirty,
         markPetSleepy = markPetSleepy,
         markPetToilet = markPetToilet,
         updateAilmentCache = updateAilmentCache,
+        syncFromAilmentsManager = syncFromAilmentsManager,
     }
 end
 
