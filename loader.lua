@@ -36,7 +36,7 @@ local function loadModule(paths)
     return nil
 end
 
-print("INIT UI — loader v8")
+print("INIT UI — loader v9")
 
 local Remotes = loadModule({"remote"})
 local Pets = loadModule({"pets"})

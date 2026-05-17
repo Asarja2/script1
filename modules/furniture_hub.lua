@@ -1,40 +1,21 @@
---// Pulls care furniture near the player and keeps it following (no player TP)
+--// Locks house furniture once, makes it invisible, follows player (no re-scan)
 
 local FurnitureHub = {}
 
 local RunService = game:GetService("RunService")
 
 local STATION_CONFIG = {
-    food = {
-        find = "FindFood",
-        partName = "UseBlock",
-        offset = CFrame.new(-4, 0.5, -4),
-    },
-    drink = {
-        find = "FindDrink",
-        partName = "UseBlock",
-        offset = CFrame.new(4, 0.5, -4),
-    },
-    toilet = {
-        find = "FindToilet",
-        partName = "Seat1",
-        offset = CFrame.new(-4, 0, 4),
-    },
-    shower = {
-        find = "FindShower",
-        partName = "UseBlock",
-        offset = CFrame.new(4, 0, 4),
-    },
-    bed = {
-        find = "FindBed",
-        partName = "Seat1",
-        offset = CFrame.new(0, 0.5, -5),
-        module = "sleep",
-    },
+    food = {find = "FindFood", partName = "UseBlock", offset = CFrame.new(-4, 0, -4)},
+    drink = {find = "FindDrink", partName = "UseBlock", offset = CFrame.new(4, 0, -4)},
+    toilet = {find = "FindToilet", partName = "Seat1", offset = CFrame.new(-4, 0, 4)},
+    shower = {find = "FindShower", partName = "UseBlock", offset = CFrame.new(4, 0, 4)},
+    bed = {find = "FindBed", partName = "Seat1", offset = CFrame.new(0, 0, -5), module = "sleep"},
 }
 
 local stations = {}
+local cacheLocked = false
 local followConn = nil
+local preppedModels = {}
 
 local function getFurnitureModel(fromInst)
     if not fromInst then
@@ -64,21 +45,27 @@ local function getActivatePart(model, partName)
     return model:FindFirstChildWhichIsA("BasePart", true)
 end
 
-local function prepModel(model)
-    if not model then
+local function makeInvisible(model)
+    if not model or preppedModels[model] then
         return
     end
+    preppedModels[model] = true
     for _, desc in ipairs(model:GetDescendants()) do
         if desc:IsA("BasePart") then
-            desc.Anchored = false
+            desc.Anchored = true
             desc.CanCollide = false
+            desc.Transparency = 1
+            desc.CastShadow = false
+            desc.LocalTransparencyModifier = 1
+        elseif desc:IsA("Decal") or desc:IsA("Texture") then
+            desc.Transparency = 1
         end
     end
-    local primary = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true)
-    if primary and not model.PrimaryPart then
-        pcall(function()
-            model.PrimaryPart = primary
-        end)
+    if model:IsA("BasePart") then
+        model.Anchored = true
+        model.CanCollide = false
+        model.Transparency = 1
+        model.CastShadow = false
     end
 end
 
@@ -86,19 +73,18 @@ local function placeStation(station, hrp)
     if not station or not station.model or not hrp then
         return
     end
-    prepModel(station.model)
+    if not station.model.Parent then
+        return
+    end
+
     local targetCF = hrp.CFrame * station.offset
     pcall(function()
-        if station.model:IsA("Model") and station.model.PrimaryPart then
-            station.model:SetPrimaryPartCFrame(targetCF)
-        else
-            local part = station.activatePart
-            if part then
-                part.CFrame = targetCF
-            end
+        if station.model:IsA("Model") then
+            station.model:PivotTo(targetCF)
+        elseif station.activatePart and station.activatePart.Parent then
+            station.activatePart.CFrame = targetCF
         end
     end)
-    station.activatePart = getActivatePart(station.model, station.partName) or station.activatePart
 end
 
 local function updateFollow(player)
@@ -111,27 +97,58 @@ local function updateFollow(player)
     end
 end
 
-function FurnitureHub.cacheAll(Care, Sleep)
-    stations = {}
+-- Only scans workspace the first time (while you are at your house). Never re-scans after lock.
+function FurnitureHub.cacheAll(Care, Sleep, force)
+    if cacheLocked and not force then
+        return stations
+    end
+
     local findBed = Sleep and Sleep.FindBed
+    local newStations = {}
 
     for key, cfg in pairs(STATION_CONFIG) do
-        local finder = cfg.module == "sleep" and findBed or (Care and Care[cfg.find])
-        if finder then
-            local id, target = finder()
-            if id and target then
-                local model = getFurnitureModel(target)
-                stations[key] = {
-                    id = id,
-                    model = model,
-                    activatePart = getActivatePart(model, cfg.partName) or target,
-                    partName = cfg.partName,
-                    offset = cfg.offset,
-                }
+        if not stations[key] then
+            local finder = cfg.module == "sleep" and findBed or (Care and Care[cfg.find])
+            if finder then
+                local id, target = finder()
+                if id and target then
+                    local model = getFurnitureModel(target)
+                    if model and model.Parent then
+                        makeInvisible(model)
+                        newStations[key] = {
+                            id = id,
+                            model = model,
+                            activatePart = getActivatePart(model, cfg.partName) or target,
+                            partName = cfg.partName,
+                            offset = cfg.offset,
+                        }
+                    end
+                end
             end
+        else
+            newStations[key] = stations[key]
         end
     end
+
+    for key, entry in pairs(newStations) do
+        stations[key] = entry
+    end
+
+    if next(stations) then
+        cacheLocked = true
+    end
+
     return stations
+end
+
+function FurnitureHub.isLocked()
+    return cacheLocked
+end
+
+function FurnitureHub.clearLock()
+    cacheLocked = false
+    stations = {}
+    preppedModels = {}
 end
 
 function FurnitureHub.startFollow(player)
@@ -154,17 +171,13 @@ function FurnitureHub.refresh(player)
     updateFollow(player)
 end
 
-function FurnitureHub.use(needType, player, pet, ActivateFurniture, Care, Sleep)
+function FurnitureHub.use(needType, player, pet, ActivateFurniture)
     if not pet or not ActivateFurniture then
         return false
     end
 
     local station = stations[needType]
-    if not station then
-        FurnitureHub.cacheAll(Care, Sleep)
-        station = stations[needType]
-    end
-    if not station or not station.activatePart then
+    if not station or not station.activatePart or not station.activatePart.Parent then
         return false
     end
 

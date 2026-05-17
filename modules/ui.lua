@@ -75,6 +75,10 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, FurnitureHub)
 
     FurnitureHub = FurnitureHub or {
         cacheAll = function() end,
+        isLocked = function()
+            return false
+        end,
+        clearLock = function() end,
         use = function()
             return false
         end,
@@ -83,7 +87,7 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, FurnitureHub)
         refresh = function() end,
     }
 
-    print("[ui] Init v8 — mobile stations, toy by name")
+    print("[ui] Init v9 — locked home furniture")
 
     local player = game:GetService("Players").LocalPlayer
     local HoldBaby = Remotes.HoldBaby
@@ -115,7 +119,7 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, FurnitureHub)
             return false
         end
         FurnitureHub.refresh(player)
-        return FurnitureHub.use(needType, player, pet, ActivateFurniture, Care, Sleep)
+        return FurnitureHub.use(needType, player, pet, ActivateFurniture)
     end
 
     local function getToyId()
@@ -162,7 +166,7 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, FurnitureHub)
         Name = "Pet Controller",
         Icon = 0,
         LoadingTitle = "Pet Controller",
-        LoadingSubtitle = "v8",
+        LoadingSubtitle = "v9",
         Theme = "Default",
         ToggleUIKeybind = Enum.KeyCode.F2,
         ConfigurationSaving = {Enabled = true, FolderName = "PetController", FileName = "config"},
@@ -484,18 +488,25 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, FurnitureHub)
         Callback = function(on)
             autofarmEnabled = on
             if on then
-                FurnitureHub.cacheAll(Care, Sleep)
-                FurnitureHub.startFollow(player)
-                if not autofarmLoop then
-                    autofarmLoop = task.spawn(function()
-                        while autofarmEnabled do
-                            pcall(autofarm)
-                            task.wait(actionBusy and 2 or 4)
-                        end
-                        autofarmLoop = nil
-                    end)
+                if not FurnitureHub.isLocked or not FurnitureHub.isLocked() then
+                    FurnitureHub.cacheAll(Care, Sleep)
                 end
-                setStatus("Autofarm ON — stations follow you")
+                if FurnitureHub.isLocked and FurnitureHub.isLocked() then
+                    FurnitureHub.startFollow(player)
+                    if not autofarmLoop then
+                        autofarmLoop = task.spawn(function()
+                            while autofarmEnabled do
+                                pcall(autofarm)
+                                task.wait(actionBusy and 2 or 4)
+                            end
+                            autofarmLoop = nil
+                        end)
+                    end
+                    setStatus("Autofarm ON — home stations follow you")
+                else
+                    setStatus("Stand in your house first, then enable autofarm")
+                    autofarmEnabled = false
+                end
             else
                 FurnitureHub.stopFollow()
                 setStatus("Autofarm OFF")
@@ -514,14 +525,26 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, FurnitureHub)
         PetDropdown:Set({o[1]})
     end
 
-    FurnitureHub.cacheAll(Care, Sleep)
+    ControlsTab:CreateButton({
+        Name = "Lock Home Furniture",
+        Callback = function()
+            FurnitureHub.clearLock()
+            FurnitureHub.cacheAll(Care, Sleep, true)
+            if FurnitureHub.isLocked and FurnitureHub.isLocked() then
+                setStatus("Home furniture locked — will follow you")
+            else
+                setStatus("Could not find furniture — stand in your house")
+            end
+        end,
+    })
+
     refreshToyLabel()
     refreshAilments()
     Rayfield:LoadConfiguration()
     pcall(function()
         Rayfield:Notify({
-            Title = "Loaded v8",
-            Content = "Care items follow you on autofarm. Toy found by squeaky name.",
+            Title = "Loaded v9",
+            Content = "Lock home furniture once, then autofarm. Stations follow you invisibly.",
             Duration = 5,
         })
     end)
