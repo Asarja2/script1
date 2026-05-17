@@ -26,11 +26,13 @@ function UI.Init(Pets, Sleep, Care, Remotes)
     local autoThrottle = {}
     
     local AILMENT_MAPPINGS = {
-        hungry = {"hungry", "feed", "needsfood", "hunger", "starving"},
-        thirsty = {"thirsty", "needsdrink", "drink", "thirst"},
-        dirty = {"dirty", "stinky", "stink", "needsbath", "bath"},
+        hungry = {"hungry", "feed", "needsfood", "needs_food", "hunger", "starving"},
+        thirsty = {"thirsty", "needsdrink", "drink", "thirst", "needs_drink"},
+        dirty = {"dirty", "stinky", "stink", "needsbath", "needs_bath", "bath"},
         toilet = {"toilet", "pee", "poop", "restroom"},
-        sleepy = {"sleepy", "tired", "needsleep", "sleep"}
+        sleepy = {"sleepy", "tired", "needsleep", "needs_sleep", "sleep"},
+        school = {"school"},
+        pet_me = {"pet_me", "petme", "pet"},
     }
 
     --// HELPERS
@@ -75,12 +77,65 @@ function UI.Init(Pets, Sleep, Care, Remotes)
         return false
     end
 
-    --// DETECTION
-    local function isDirty(pet) return checkAnyAilment(pet, AILMENT_MAPPINGS.dirty) end
-    local function isSleepy(pet) return checkAnyAilment(pet, AILMENT_MAPPINGS.sleepy) end
-    local function isHungry(pet) return checkAnyAilment(pet, AILMENT_MAPPINGS.hungry) end
-    local function isThirsty(pet) return checkAnyAilment(pet, AILMENT_MAPPINGS.thirsty) end
-    local function isToilet(pet) return checkAnyAilment(pet, AILMENT_MAPPINGS.toilet) end
+    local function checkMappedNeed(pet, needName)
+        local keys = AILMENT_MAPPINGS[needName]
+        return keys and checkAnyAilment(pet, keys) or false
+    end
+
+    local function getActiveCacheKeys(pet)
+        local petId = resolvePetId(pet)
+        if not petId or not PetAilmentCache[petId] then return {} end
+        local keys = {}
+        for key in pairs(PetAilmentCache[petId]) do
+            table.insert(keys, tostring(key))
+        end
+        table.sort(keys)
+        return keys
+    end
+
+    local function debugPetNeeds(pet, source)
+        if not pet then return end
+        local cacheKeys = table.concat(getActiveCacheKeys(pet), ", ")
+        print(
+            "[PET NEEDS DEBUG]",
+            source or "?",
+            "pet=" .. pet.Name,
+            "id=" .. tostring(resolvePetId(pet)),
+            "| cache:", cacheKeys == "" and "(empty)" or cacheKeys,
+            "| sleepy=" .. tostring(checkMappedNeed(pet, "sleepy")),
+            "dirty=" .. tostring(checkMappedNeed(pet, "dirty")),
+            "hungry=" .. tostring(checkMappedNeed(pet, "hungry")),
+            "thirsty=" .. tostring(checkMappedNeed(pet, "thirsty")),
+            "toilet=" .. tostring(checkMappedNeed(pet, "toilet")),
+            "school=" .. tostring(checkMappedNeed(pet, "school")),
+            "pet_me=" .. tostring(checkMappedNeed(pet, "pet_me"))
+        )
+    end
+
+    local function syncAilmentsFromData(data)
+        if type(data) ~= "table" or type(data.ailments) ~= "table" then
+            return
+        end
+        for petId, ailmentTable in pairs(data.ailments) do
+            if type(ailmentTable) == "table" then
+                local normalized = {}
+                for ailmentName, ailmentData in pairs(ailmentTable) do
+                    local key = tostring(ailmentName):lower()
+                    normalized[key] = true
+                    print("PET:", petId, "AILMENT:", ailmentName)
+                    collectAilments(ailmentData, normalized)
+                end
+                PetAilmentCache[tostring(petId)] = normalized
+            end
+        end
+    end
+
+    --// DETECTION (ailments_manager cache + key aliases)
+    local function isDirty(pet) return checkMappedNeed(pet, "dirty") end
+    local function isSleepy(pet) return checkMappedNeed(pet, "sleepy") end
+    local function isHungry(pet) return checkMappedNeed(pet, "hungry") end
+    local function isThirsty(pet) return checkMappedNeed(pet, "thirsty") end
+    local function isToilet(pet) return checkMappedNeed(pet, "toilet") end
     local function isSleeping(pet)
         local state = PetState[pet]
         if not state then return false end
@@ -150,29 +205,44 @@ function UI.Init(Pets, Sleep, Care, Remotes)
         setreadonly(mt, true)
     end)
 
-    --// DATA CHANGED
+    --// DATA CHANGED (ailments_manager — same method as AilmentViewer example)
     if DataChanged and DataChanged:IsA("RemoteEvent") then
         handleDataChanged = function(playerName, dataType, data, timestamp)
-            if handleDataChangedGuard or dataType ~= "ailments_manager" or type(data) ~= "table" then
-                handleDataChangedGuard = false return
+            if dataType ~= "ailments_manager" or type(data) ~= "table" then
+                return
+            end
+            if handleDataChangedGuard then
+                return
             end
             handleDataChangedGuard = true
-            local ailments = data.ailments
-            if type(ailments) == "table" then
-                for petId, ailmentTable in pairs(ailments) do
-                    if type(ailmentTable) == "table" then
-                        local normalized = {}
-                        for ailName, ailData in pairs(ailmentTable) do
-                            addAilmentKey(normalized, ailName:lower())
-                            collectAilments(ailData, normalized)
+            syncAilmentsFromData(data)
+            local pet = resolveSelectedPet()
+            if pet then
+                local petId = resolvePetId(pet)
+                if petId and data.ailments and data.ailments[petId] == nil then
+                    for id, _ in pairs(data.ailments) do
+                        if tostring(id) == tostring(petId) then
+                            petId = id
+                            break
                         end
-                        PetAilmentCache[tostring(petId)] = normalized
                     end
+                end
+                debugPetNeeds(pet, "ailments_manager")
+                updatePetStatus(pet)
+                if autofarmEnabled then
+                    task.spawn(function() pcall(runAutofarmOnce) end)
                 end
             end
             handleDataChangedGuard = false
         end
-        DataChanged.OnClientEvent:Connect(function(...) if handleDataChanged then pcall(handleDataChanged, ...) end end)
+        DataChanged.OnClientEvent:Connect(function(...)
+            if handleDataChanged then
+                pcall(handleDataChanged, ...)
+            end
+        end)
+        print("Ailment detection: listening to DataAPI/DataChanged (ailments_manager)")
+    else
+        warn("Ailment detection: DataAPI/DataChanged not found")
     end
 
     --// FURNITURE
@@ -195,6 +265,7 @@ function UI.Init(Pets, Sleep, Care, Remotes)
     --// AUTOFARM
     local function runAutofarmOnce()
         if not selectedPet then return false end
+        debugPetNeeds(selectedPet, "autofarm")
         if isSleeping(selectedPet) then return true end
         
         if isHungry(selectedPet) then
@@ -329,7 +400,13 @@ function UI.Init(Pets, Sleep, Care, Remotes)
         Callback = function(v) setAutofarm(v) end
     })
 
-    Tab:CreateButton({Name = "Refresh Pets", Callback = function() task.wait(0) end})
+    Tab:CreateButton({Name = "🔍 Debug Pet Needs", Callback = function()
+        local pet = resolveSelectedPet()
+        if not pet then updateStatus("No pet selected") return end
+        debugPetNeeds(pet, "manual")
+        updatePetStatus(pet)
+        updateStatus("Printed needs to console (F9)")
+    end})
 
     local pets = Pets.GetPets()
     if #pets > 0 then
@@ -341,18 +418,7 @@ function UI.Init(Pets, Sleep, Care, Remotes)
     end
 
     Rayfield:LoadConfiguration()
-end
-
-return UI
-        end
-    })
-
-    --// Initial Refresh
-    refreshPets()
-    refreshSelectedPetStatus()
-
-
-    Rayfield:LoadConfiguration()
+    print("Ailment UI loaded.")
 end
 
 return UI

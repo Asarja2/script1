@@ -50,17 +50,19 @@ function UI.Init(Pets, Sleep, Care, Remotes)
     --// Initialize modules
     local petStates = PetStates.Init()
     local taskQueue = TaskQueue.Init()
-    local detection = Detection.Init(petStates.PetAilmentCache, petStates.PetState)
-    local furniture = Furniture.Init(player, ActivateFurniture, Helpers)
-    local status = UIStatus.Init(detection)
-
     local AILMENT_MAPPINGS = {
-        hungry = {"hungry", "feed", "needsfood", "needs_food", "hunger", "starving", "needs_food"},
+        hungry = {"hungry", "feed", "needsfood", "needs_food", "hunger", "starving"},
         thirsty = {"thirsty", "needsdrink", "drink", "thirst", "needs_drink"},
         dirty = {"dirty", "stinky", "stink", "needsbath", "needs_bath", "bath"},
         toilet = {"toilet", "pee", "poop", "restroom"},
-        sleepy = {"sleepy", "tired", "needsleep", "needs_sleep", "sleep"}
+        sleepy = {"sleepy", "tired", "needsleep", "needs_sleep", "sleep"},
+        school = {"school"},
+        pet_me = {"pet_me", "petme", "pet"},
     }
+    local detection = Detection.Init(petStates.PetAilmentCache, petStates.PetState, AILMENT_MAPPINGS)
+    local furniture = Furniture.Init(player, ActivateFurniture, Helpers)
+    local status = UIStatus.Init(detection)
+
     local dataChangedAutofarmThrottle = setmetatable({}, {__mode = "k"})
 
     local function interceptDataChangedEvent()
@@ -277,6 +279,10 @@ function UI.Init(Pets, Sleep, Care, Remotes)
             for petId, ailmentTable in pairs(ailments) do
                 local normalized = petStates.updateAilmentCache(petId, ailmentTable)
 
+                for ailmentName, _ in pairs(ailmentTable) do
+                    print("PET:", petId, "AILMENT:", ailmentName)
+                end
+
                 -- derive mapped logical states (hungry/thirsty/etc) from arbitrary ailment keys
                 local mappedState = {}
                 for logicalName, keys in pairs(AILMENT_MAPPINGS) do
@@ -320,6 +326,7 @@ function UI.Init(Pets, Sleep, Care, Remotes)
                     end
 
                     if selected and selected == petModel then
+                        detection.debugPetNeeds(petModel, "ailments_manager")
                         refreshSelectedPetStatus()
                         if autofarmEnabled then
                             if mappedState["toilet"] or hasToilet then
@@ -643,12 +650,7 @@ function UI.Init(Pets, Sleep, Care, Remotes)
 
         status.updateStatus("Checking pet needs...")
         local needs = getNeedsState(selectedPet)
-        print("AUTOFARM STATE:", selectedPet.Name,
-            "hungry=" .. tostring(needs.hungry),
-            "thirsty=" .. tostring(detection.isThirsty(selectedPet)),
-            "dirty=" .. tostring(needs.dirty),
-            "sleepy=" .. tostring(needs.sleepy),
-            "sleeping=" .. tostring(detection.isSleeping(selectedPet)))
+        detection.debugPetNeeds(selectedPet, "autofarm")
 
         if detection.isSleeping(selectedPet) then
             status.updateStatus(selectedPet.Name .. " is already sleeping")
@@ -748,6 +750,20 @@ function UI.Init(Pets, Sleep, Care, Remotes)
     end
 
     --// Buttons
+    tab:CreateButton({
+        Name = "🔍 Debug Pet Needs",
+        Callback = function()
+            local pet = resolveSelectedPet()
+            if not pet then
+                status.updateStatus("No pet selected")
+                return
+            end
+            detection.debugPetNeeds(pet, "manual")
+            refreshSelectedPetStatus()
+            status.updateStatus("Printed needs to console (F9)")
+        end
+    })
+
     tab:CreateButton({
         Name = "🔄 Refresh Pets",
         Callback = function()

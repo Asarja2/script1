@@ -111,7 +111,7 @@ function PetStates.Init()
         local normalized = {}
         for ailmentName, ailmentData in pairs(ailmentTable) do
             local lower = tostring(ailmentName):lower()
-            normalized[lower] = ailmentData
+            normalized[lower] = true
             addAilmentKey(normalized, lower)
             collectAilmentKeys(ailmentData, normalized)
         end

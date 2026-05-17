@@ -9,6 +9,6 @@ Remotes.ActivateFurniture = API:WaitForChild("HousingAPI/ActivateFurniture")
 Remotes.ReplicatePerformanceModifiers = API:WaitForChild("PetAPI/ReplicatePerformanceModifiers")
 Remotes.ReplicateActivePerformances = API:FindFirstChild("PetAPI/ReplicateActivePerformances")
 Remotes.ReplicateActiveReactions = API:FindFirstChild("PetAPI/ReplicateActiveReactions")
-Remotes.DataChanged = API:FindFirstChild("DataAPI/DataChanged")
+Remotes.DataChanged = API:WaitForChild("DataAPI/DataChanged")
 
 return Remotes
