@@ -477,6 +477,17 @@ function UI.Init(Pets, Sleep, Care, Remotes)
                     end
                     PetAilmentCache[tostring(petId)] = normalized
 
+                    -- derive mapped logical states (hungry/thirsty/etc) from arbitrary ailment keys
+                    local mappedState = {}
+                    for logicalName, keys in pairs(AILMENT_MAPPINGS) do
+                        for _, k in ipairs(keys) do
+                            if normalized[tostring(k):lower()] then
+                                mappedState[logicalName] = true
+                                break
+                            end
+                        end
+                    end
+
                     -- try to resolve the pet model from the petId
                     local petModel = nil
                     for _, p in ipairs(Pets.GetPets()) do
@@ -487,7 +498,14 @@ function UI.Init(Pets, Sleep, Care, Remotes)
                         end
                     end
 
-                    -- mark ailments on the pet model so other detection logic stays in sync
+                    local selected = resolveSelectedPet()
+                    if not petModel and selected then
+                        local currentId = resolvePetId(selected)
+                        if tostring(currentId) == tostring(petId) then
+                            petModel = selected
+                        end
+                    end
+
                     if petModel then
                         local hasDirty = normalized["dirty"] or normalized["stinky"] or normalized["stink"]
                         local hasSleepy = normalized["sleepy"]
@@ -497,24 +515,10 @@ function UI.Init(Pets, Sleep, Care, Remotes)
                         markPetSleepy(petModel, hasSleepy and true or false)
                         markPetToilet(petModel, hasToilet and true or false)
 
-                        -- derive mapped logical states (hungry/thirsty/etc) from arbitrary ailment keys
-                        local mappedState = {}
-                        for logicalName, keys in pairs(AILMENT_MAPPINGS) do
-                            for _, k in ipairs(keys) do
-                                if normalized[tostring(k):lower()] then
-                                    mappedState[logicalName] = true
-                                    break
-                                end
-                            end
-                        end
-
-                        -- update PetState so existing checks like isHungry/isThirsty work
                         if next(mappedState) then
                             updatePetState(petModel, mappedState)
                         end
 
-                        -- if this is the selected pet, refresh status and possibly queue autofarm
-                        local selected = resolveSelectedPet()
                         if selected and selected == petModel then
                             refreshSelectedPetStatus()
                             if autofarmEnabled then
@@ -527,7 +531,6 @@ function UI.Init(Pets, Sleep, Care, Remotes)
                                 if mappedState["sleepy"] or hasSleepy then
                                     queueAutofarmTask("sleep", petModel)
                                 end
-                                -- also throttle a full autofarm run to avoid rapid repeats
                                 local last = dataChangedAutofarmThrottle[selected]
                                 if not last or (time() - last) > 2 then
                                     dataChangedAutofarmThrottle[selected] = time()
@@ -541,11 +544,12 @@ function UI.Init(Pets, Sleep, Care, Remotes)
                             end
                         end
                     else
-                        -- fallback: if selected pet matches id, still refresh label
-                        local selected = resolveSelectedPet()
                         if selected then
                             local currentId = resolvePetId(selected)
                             if tostring(currentId) == tostring(petId) then
+                                if next(mappedState) then
+                                    updatePetState(selected, mappedState)
+                                end
                                 refreshSelectedPetStatus()
                                 if autofarmEnabled then
                                     local last = dataChangedAutofarmThrottle[selected]
