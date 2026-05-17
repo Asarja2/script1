@@ -260,6 +260,37 @@ function UI.Init(Pets, Sleep, Care, Remotes)
         return PetState[pet]
     end
 
+    local function addAilmentKey(normalized, key)
+        if not key then
+            return
+        end
+        local lower = tostring(key):lower()
+        if lower ~= "" then
+            normalized[lower] = true
+        end
+    end
+
+    local function collectAilmentKeys(ailmentData, normalized)
+        if type(ailmentData) ~= "table" then
+            return
+        end
+        if ailmentData.ailment_key then
+            addAilmentKey(normalized, ailmentData.ailment_key)
+        end
+        if ailmentData.kind then
+            addAilmentKey(normalized, ailmentData.kind)
+        end
+        if ailmentData.ailment_name then
+            addAilmentKey(normalized, ailmentData.ailment_name)
+        end
+        if type(ailmentData.components) == "table" then
+            for subName, subData in pairs(ailmentData.components) do
+                addAilmentKey(normalized, subName)
+                collectAilmentKeys(subData, normalized)
+            end
+        end
+    end
+
     local function stateHasAny(pet, keys)
         local state = getPetState(pet)
         if not state then
@@ -473,7 +504,8 @@ function UI.Init(Pets, Sleep, Care, Remotes)
                     for ailmentName, ailmentData in pairs(ailmentTable) do
                         local lower = tostring(ailmentName):lower()
                         normalized[lower] = ailmentData
-                        print("AILMENT UPDATE", petId, lower)
+                        addAilmentKey(normalized, lower)
+                        collectAilmentKeys(ailmentData, normalized)
                     end
                     PetAilmentCache[tostring(petId)] = normalized
 
@@ -862,6 +894,10 @@ function UI.Init(Pets, Sleep, Care, Remotes)
     end
 
     local function isHungry(pet)
+        if petHasAilment(pet, "hungry") or petHasAilment(pet, "starving") or petHasAilment(pet, "feed") or petHasAilment(pet, "needsfood") then
+            return true
+        end
+
         local state = getPetState(pet)
         if not state then
             return false
@@ -881,10 +917,10 @@ function UI.Init(Pets, Sleep, Care, Remotes)
             dirty = isDirty(pet),
             sleepy = isSleepy(pet),
             hungry = isHungry(pet),
+            thirsty = isThirsty(pet),
             toilet = petHasAilment(pet, "toilet")
         }
     end
-
     local function isSleeping(pet)
         if stateHasAny(pet, {"sleeping", "Sleeping", "Asleep", "asleep", "Sleep", "FallAsleep", "FocusPet", "SleepLoop"}) then
             return true
@@ -893,6 +929,9 @@ function UI.Init(Pets, Sleep, Care, Remotes)
     end
 
     local function isThirsty(pet)
+        if petHasAilment(pet, "thirsty") or petHasAilment(pet, "needsdrink") or petHasAilment(pet, "drink") or petHasAilment(pet, "thirst") then
+            return true
+        end
         if stateHasAny(pet, {"Thirsty", "Parched", "NeedsDrink", "Drink", "Thirst"}) then
             return true
         end
@@ -1653,14 +1692,6 @@ function UI.Init(Pets, Sleep, Care, Remotes)
     refreshPets()
     refreshSelectedPetStatus()
 
-    --// Remote Debug Logger
-    print("=== PET APIS ===")
-    local APIDebug = game:GetService("ReplicatedStorage"):WaitForChild("API")
-    for _,v in pairs(APIDebug:GetDescendants()) do
-        if v:IsA("RemoteEvent") or v:IsA("RemoteFunction") then
-            print(v:GetFullName())
-        end
-    end
 
     Rayfield:LoadConfiguration()
 end
