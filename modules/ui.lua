@@ -73,23 +73,116 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
         walkWithPet = function() end,
     }
 
-    Requirements = Requirements or {
-        scan = function()
-            return {results = {}, missing = {}, readyCount = 0, total = 0}
-        end,
-        canHandleNeed = function()
-            return true
-        end,
-        getSummaryText = function()
-            return "Status: unavailable", COLOR_WARN
-        end,
-        formatRow = formatNeed,
-        ITEMS = {},
+    local player = game:GetService("Players").LocalPlayer
+
+    local REQ_ITEMS = {
+        {key = "food", label = "Food Bowl", need = "hungry", find = "FindFood", module = "care"},
+        {key = "drink", label = "Water Bowl", need = "thirsty", find = "FindDrink", module = "care"},
+        {key = "toilet", label = "Toilet", need = "toilet", find = "FindToilet", module = "care"},
+        {key = "shower", label = "Shower", need = "dirty", find = "FindShower", module = "care"},
+        {key = "bed", label = "Pet Bed", need = "sleepy", find = "FindBed", module = "sleep"},
+        {key = "toy", label = "squeaky_bone_default", need = "play", toy = true},
     }
+
+    local lastReqScan = {results = {}, missing = {}}
+
+    local function formatReqRow(label, ready)
+        if ready then
+            return "●  " .. label .. "  ·  ready"
+        end
+        return "○  " .. label .. "  ·  missing"
+    end
+
+    local function scanHouse()
+        local results = {}
+        local missing = {}
+        for _, item in ipairs(REQ_ITEMS) do
+            local found = false
+            if item.toy then
+                if Toys.findToyByName then
+                    local uid = Toys.findToyByName(player)
+                    found = uid ~= nil and uid ~= ""
+                end
+            else
+                local finder = item.module == "sleep" and Sleep[item.find] or Care[item.find]
+                if finder then
+                    local id, target = finder()
+                    found = id ~= nil and target ~= nil
+                end
+            end
+            results[item.key] = {key = item.key, label = item.label, found = found}
+            if found then
+                -- ok
+            else
+                table.insert(missing, item.label)
+            end
+        end
+        lastReqScan = {results = results, missing = missing}
+        return lastReqScan
+    end
+
+    local function getReqSummary()
+        if not lastReqScan.results or not next(lastReqScan.results) then
+            return "Status: not scanned", COLOR_WARN
+        end
+        if #lastReqScan.missing == 0 then
+            return "Status: all requirements met", COLOR_ACTIVE
+        end
+        return "Status: " .. #lastReqScan.missing .. " missing", COLOR_WARN
+    end
+
+    local function canHandleNeed(needKey)
+        local map = {
+            hungry = "food",
+            thirsty = "drink",
+            toilet = "toilet",
+            dirty = "shower",
+            sleepy = "bed",
+            play = "toy",
+            pet_me = "toy",
+        }
+        local itemKey = map[needKey]
+        if not itemKey then
+            return true
+        end
+        if not lastReqScan.results or not next(lastReqScan.results) then
+            return true
+        end
+        local row = lastReqScan.results[itemKey]
+        return row and row.found == true
+    end
+
+    local function allCareReady()
+        if not lastReqScan.results or not next(lastReqScan.results) then
+            return false, {"Scan not run"}
+        end
+        if #lastReqScan.missing == 0 then
+            return true, nil
+        end
+        return false, lastReqScan.missing
+    end
+
+    local builtinRequirements = {
+        scan = function()
+            return scanHouse()
+        end,
+        getLastScan = function()
+            return lastReqScan
+        end,
+        getSummaryText = getReqSummary,
+        formatRow = formatReqRow,
+        canHandleNeed = canHandleNeed,
+        allCareReady = allCareReady,
+        ITEMS = REQ_ITEMS,
+    }
+
+    if type(Requirements) ~= "table" or type(Requirements.scan) ~= "function" then
+        warn("[ui] requirements.lua missing or invalid — using built-in scanner")
+        Requirements = builtinRequirements
+    end
 
     print("[ui] Init v10 — TP care + requirements tab")
 
-    local player = game:GetService("Players").LocalPlayer
     local HoldBaby = Remotes.HoldBaby
     local EjectBaby = Remotes.EjectBaby
     local ActivateFurniture = Remotes.ActivateFurniture
@@ -257,11 +350,19 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
     end
 
     local function refreshRequirements()
-        local scan = Requirements.scan(Care, Sleep, Toys, player)
+        local ok, err = pcall(function()
+            Requirements.scan(Care, Sleep, Toys, player)
+        end)
+        if not ok then
+            warn("[ui] refreshRequirements:", err)
+            setLabel(ReqSummaryLabel, "Status: scan error", COLOR_WARN)
+            return
+        end
         local summary, summaryColor = Requirements.getSummaryText()
         setLabel(ReqSummaryLabel, summary, summaryColor)
-        for _, item in ipairs(Requirements.ITEMS or {}) do
-            local row = scan.results[item.key]
+        local scan = (Requirements.getLastScan and Requirements.getLastScan()) or lastReqScan
+        for _, item in ipairs(Requirements.ITEMS or REQ_ITEMS) do
+            local row = scan.results and scan.results[item.key]
             local ready = row and row.found
             setLabel(
                 reqLabels[item.key],
@@ -274,7 +375,7 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
     ReqTab:CreateButton({
         Name = "Scan House",
         Callback = function()
-            refreshRequirements()
+            pcall(refreshRequirements)
             setStatus("Requirements scanned")
         end,
     })

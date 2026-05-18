@@ -162,7 +162,7 @@ function Requirements.getSummaryText()
     return "Status: " .. #lastScan.missing .. " missing", COLOR_WARN
 end
 
-function Requirements.formatRow = formatRow
+Requirements.formatRow = formatRow
 Requirements.COLOR_OK = COLOR_OK
 Requirements.COLOR_MISSING = COLOR_MISSING
 Requirements.COLOR_WARN = COLOR_WARN
