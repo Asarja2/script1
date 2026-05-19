@@ -259,38 +259,40 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
         end
 
         local id, target, partName
+        local findFunc = nil
+
         if needType == "food" then
-            id, target = Care.FindFood()
+            findFunc = Care.FindFood
             partName = "UseBlock"
         elseif needType == "drink" then
-            id, target = Care.FindDrink()
+            findFunc = Care.FindDrink
             partName = "UseBlock"
         elseif needType == "shower" then
-            id, target = Care.FindShower()
+            findFunc = Care.FindShower
             partName = "UseBlock"
         elseif needType == "toilet" then
-            id, target = Care.FindToilet()
+            findFunc = Care.FindToilet
             partName = "Seat1"
         elseif needType == "bed" then
-            id, target = Sleep.FindBed()
+            findFunc = Sleep.FindBed
             partName = "Seat1"
         else
             return false
         end
 
+        -- Try to find furniture locally first
+        id, target = findFunc()
+
+        -- If not found, TP home and try again (furniture may be out of streaming range)
         if not id or not target then
-            -- If toilet not found, TP home and try again
-            if needType == "toilet" then
-                setStatus("Toilet not found, TPing home...")
-                if TeamSpawn then
-                    pcall(function()
-                        TeamSpawn:InvokeServer()
-                    end)
-                end
-                task.wait(5)  -- Wait for home furniture to load
-                id, target = Care.FindToilet()
-                partName = "Seat1"
+            setStatus("Furniture not found, TPing home...")
+            if TeamSpawn then
+                pcall(function()
+                    TeamSpawn:InvokeServer()
+                end)
             end
+            task.wait(5)  -- Wait for home furniture to load
+            id, target = findFunc()
         end
 
         if not id or not target then
