@@ -339,6 +339,18 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
         -- Try to find furniture locally
         id, target = findFunc()
 
+        -- If the found target is part of HouseInteriors, prefer entering the house first
+        if target and workspace:FindFirstChild("HouseInteriors") and target:IsDescendantOf(workspace.HouseInteriors) then
+            print("[ui] useFurniture: target inside HouseInteriors — entering house for", needType)
+            setStatus("TPing to house for " .. needType)
+            if not enterHouseViaDoor() then
+                print("[ui] enterHouseViaDoor failed")
+                return false
+            end
+            id, target = findFunc()
+            print("[ui] re-scan after entering house — found:", id, target and target:GetFullName() or "nil")
+        end
+
         -- If not found, TP to house and try again
         if not id or not target then
             setStatus("TPing to house for " .. needType)
@@ -705,6 +717,24 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
 
     local function findCustomTeleportTarget(pet)
         if PetState.isSchool(pet) or petHasActiveKey(pet, "school") then
+            -- prefer the WorkingParts TouchToEnter if available (two possible Interiors layouts)
+            local t1 = workspace:FindFirstChild("Interiors")
+                and workspace.Interiors:FindFirstChild("School")
+                and workspace.Interiors.School:FindFirstChild("Doors")
+                and workspace.Interiors.School.Doors:FindFirstChild("MainDoor")
+                and workspace.Interiors.School.Doors.MainDoor:FindFirstChild("WorkingParts")
+                and workspace.Interiors.School.Doors.MainDoor.WorkingParts:FindFirstChild("TouchToEnter")
+            if t1 then return t1 end
+
+            local t2 = workspace:FindFirstChild("Interiors")
+                and workspace.Interiors:FindFirstChild("MainMap!Default")
+                and workspace.Interiors["MainMap!Default"].Doors
+                and workspace.Interiors["MainMap!Default"].Doors:FindFirstChild("School/MainDoor")
+                and workspace.Interiors["MainMap!Default"].Doors["School/MainDoor"]:FindFirstChild("WorkingParts")
+                and workspace.Interiors["MainMap!Default"].Doors["School/MainDoor"].WorkingParts:FindFirstChild("TouchToEnter")
+            if t2 then return t2 end
+
+            -- fallback to the MainDoor model if no touch part exists
             return workspace:FindFirstChild("Interiors")
                 and workspace.Interiors:FindFirstChild("School")
                 and workspace.Interiors.School:FindFirstChild("Doors")
@@ -775,6 +805,23 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
             end
             return beachNode:FindFirstChild("Beach2024Log", true) or beachNode
         elseif name == "school" then
+            -- prefer TouchToEnter working part when available
+            local t1 = workspace:FindFirstChild("Interiors")
+                and workspace.Interiors:FindFirstChild("School")
+                and workspace.Interiors.School:FindFirstChild("Doors")
+                and workspace.Interiors.School.Doors:FindFirstChild("MainDoor")
+                and workspace.Interiors.School.Doors.MainDoor:FindFirstChild("WorkingParts")
+                and workspace.Interiors.School.Doors.MainDoor.WorkingParts:FindFirstChild("TouchToEnter")
+            if t1 then return t1 end
+
+            local t2 = workspace:FindFirstChild("Interiors")
+                and workspace.Interiors:FindFirstChild("MainMap!Default")
+                and workspace.Interiors["MainMap!Default"].Doors
+                and workspace.Interiors["MainMap!Default"].Doors:FindFirstChild("School/MainDoor")
+                and workspace.Interiors["MainMap!Default"].Doors["School/MainDoor"]:FindFirstChild("WorkingParts")
+                and workspace.Interiors["MainMap!Default"].Doors["School/MainDoor"].WorkingParts:FindFirstChild("TouchToEnter")
+            if t2 then return t2 end
+
             return workspace:FindFirstChild("Interiors")
                 and workspace.Interiors:FindFirstChild("School")
                 and workspace.Interiors.School:FindFirstChild("Doors")
@@ -830,20 +877,50 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
 
     local function teleportForSpecialNeed(pet)
         setStatus("TPing to " .. getSpecialNeedName(pet))
-        
+
         -- Exit house to load special areas
         if not exitHouseToMainArea() then
             setStatus("Failed to exit house")
             return false
         end
-        
+
         -- Find target AFTER exiting and waiting
         local target = findCustomTeleportTarget(pet)
         if not target then
             setStatus("Special area target not found")
             return false
         end
-        
+
+        -- If the target is a door touch part (TouchToEnter), fly to it instead of safe-plate teleport
+        local tpPart = resolveTeleportPart(target)
+        if tpPart and tpPart.Name == "TouchToEnter" then
+            local char = player.Character or player.CharacterAdded:Wait()
+            local hrp = char:WaitForChild("HumanoidRootPart")
+            local RunService = game:GetService("RunService")
+            local speed = 120
+            local stopDistance = 2
+            local conn
+            -- start above the door
+            char:PivotTo(hrp.CFrame + Vector3.new(0, 10, 0))
+            task.wait(0.5)
+            conn = RunService.Heartbeat:Connect(function(dt)
+                if not hrp or not hrp.Parent then
+                    conn:Disconnect()
+                    return
+                end
+                local direction = (tpPart.Position - hrp.Position)
+                local distance = direction.Magnitude
+                if distance <= stopDistance then
+                    conn:Disconnect()
+                    return
+                end
+                direction = direction.Unit
+                hrp.CFrame = hrp.CFrame + direction * speed * dt
+            end)
+            task.wait(5)
+            return true
+        end
+
         -- TP to furniture object
         if teleportToSafePart(target) then
             task.wait(1)
@@ -856,21 +933,58 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
 
     local function teleportToNamedTargetAsync(name)
         setStatus("Loading " .. name .. " furniture")
-        
+
         -- Exit house to load special areas
+        print("[ui] teleportToNamedTargetAsync: exiting house to load", name)
         if not exitHouseToMainArea() then
             setStatus("Failed to exit house")
+            print("[ui] exitHouseToMainArea failed for", name)
             return
         end
-        
+
         -- Find target AFTER exiting and waiting
         local target = getTeleportTarget(name)
+        print("[ui] getTeleportTarget returned:", target and target:GetFullName() or "nil")
         if not target then
             setStatus("TP target not found: " .. name)
             return
         end
-        
+
+        -- If the target is a door touch part, fly to it like the school snippet
+        local tpPart = resolveTeleportPart(target)
+        if tpPart and tpPart.Name == "TouchToEnter" then
+            setStatus("Flying to " .. name .. " door")
+            print("[ui] flying to TouchToEnter for", name, tpPart:GetFullName())
+            local char = player.Character or player.CharacterAdded:Wait()
+            local hrp = char:WaitForChild("HumanoidRootPart")
+            local RunService = game:GetService("RunService")
+            local speed = 120
+            local stopDistance = 2
+            local conn
+            -- start above the door
+            char:PivotTo(hrp.CFrame + Vector3.new(0, 10, 0))
+            task.wait(0.5)
+            conn = RunService.Heartbeat:Connect(function(dt)
+                if not hrp or not hrp.Parent then
+                    conn:Disconnect()
+                    return
+                end
+                local direction = (tpPart.Position - hrp.Position)
+                local distance = direction.Magnitude
+                if distance <= stopDistance then
+                    conn:Disconnect()
+                    return
+                end
+                direction = direction.Unit
+                hrp.CFrame = hrp.CFrame + direction * speed * dt
+            end)
+            task.wait(5)
+            setStatus("Arrived at " .. name .. " door")
+            return
+        end
+
         -- TP to furniture object
+        print("[ui] teleportToNamedTargetAsync: teleportToSafePart for", name)
         if teleportToSafePart(target) then
             task.wait(1)
             setStatus("Teleported to " .. name)
