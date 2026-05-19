@@ -494,6 +494,109 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
         setStatus("Walk done")
     end
 
+    local function petHasActiveKey(pet, ...)
+        local active = PetState.getActive(pet)
+        if not active then
+            return false
+        end
+        for i = 1, select("#", ...) do
+            local key = tostring(select(i, ...)):lower()
+            if active[key] then
+                return true
+            end
+        end
+        return false
+    end
+
+    local function resolveTeleportPart(target)
+        if not target then
+            return nil
+        end
+        if target:IsA("BasePart") then
+            return target
+        end
+        if target:IsA("Model") then
+            if target.PrimaryPart then
+                return target.PrimaryPart
+            end
+            return target:FindFirstChildWhichIsA("BasePart", true)
+        end
+        return target:FindFirstChildWhichIsA("BasePart", true)
+    end
+
+    local function teleportToSafePart(target)
+        local part = resolveTeleportPart(target)
+        if not part then
+            return false
+        end
+
+        local platform = Instance.new("Part")
+        platform.Name = "PetControllerSafeBaseplate"
+        platform.Anchored = true
+        platform.CanCollide = true
+        platform.Transparency = 1
+        platform.Size = Vector3.new(8, 1, 8)
+        platform.CFrame = part.CFrame * CFrame.new(0, -3, 0)
+        platform.Parent = workspace
+
+        local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+        if root then
+            root.CFrame = platform.CFrame * CFrame.new(0, 3, 0)
+        end
+
+        spawn(function()
+            wait(5)
+            if platform and platform.Parent then
+                platform:Destroy()
+            end
+        end)
+
+        return true
+    end
+
+    local function findCustomTeleportTarget(pet)
+        if PetState.isSchool(pet) or petHasActiveKey(pet, "school") then
+            return workspace:FindFirstChild("Interiors")
+                and workspace.Interiors:FindFirstChild("School")
+                and workspace.Interiors.School:FindFirstChild("Doors")
+                and workspace.Interiors.School.Doors:FindFirstChild("MainDoor")
+        end
+
+        if petHasActiveKey(pet, "beach", "beach_party") then
+            local furniture = workspace:FindFirstChild("HouseInteriors")
+                and workspace.HouseInteriors:FindFirstChild("furniture")
+            local beachNode = furniture and furniture:FindFirstChild("nil/nil/MainMap!Default/false/f-28")
+            return beachNode and beachNode:FindFirstChild("Beach2024Log") or beachNode
+        end
+
+        if petHasActiveKey(pet, "camp", "camping", "sleeping_bag") then
+            local furniture = workspace:FindFirstChild("HouseInteriors")
+                and workspace.HouseInteriors:FindFirstChild("furniture")
+            local campNode = furniture and furniture:FindFirstChild("nil/nil/MainMap!Default/false/f-5")
+            return campNode and campNode:FindFirstChild("SleepingBag") or campNode
+        end
+
+        if petHasActiveKey(pet, "playground", "park", "roundabout") then
+            return workspace:FindFirstChild("StaticMap")
+                and workspace.StaticMap:FindFirstChild("Park")
+                and workspace.StaticMap.Park:FindFirstChild("Roundabout")
+                and workspace.StaticMap.Park.Roundabout:FindFirstChild("SeatsSpinModel")
+                and workspace.StaticMap.Park.Roundabout.SeatsSpinModel:FindFirstChild("Collisions")
+                and workspace.StaticMap.Park.Roundabout.SeatsSpinModel.Collisions:FindFirstChild("Collider")
+        end
+
+        return nil
+    end
+
+    local function teleportForSpecialNeed(pet)
+        local target = findCustomTeleportTarget(pet)
+        if not target then
+            return false
+        end
+        setStatus("Teleporting for special need")
+        return teleportToSafePart(target)
+    end
+
     local function autofarm()
         if actionBusy then
             return
@@ -547,6 +650,9 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
             end
             setStatus("Sleep")
             useFurniture("bed", pet)
+            return
+        end
+        if teleportForSpecialNeed(pet) then
             return
         end
         if stillWalk(pet) then
