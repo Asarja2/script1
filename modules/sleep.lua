@@ -45,8 +45,13 @@ function Sleep.FindBed()
     end
 
     if #beds > 0 then
-        print("DEBUG: using fallback bed", beds[1].id, beds[1].obj:GetFullName())
-        return beds[1].id, beds[1].obj
+        -- Only accept explicit sleep-related matches; no generic fallback to arbitrary Seat1 objects
+        for _, entry in ipairs(beds) do
+            if entry.text:find("bed") or entry.text:find("sleep") then
+                print("DEBUG: matched sleep bed", entry.obj:GetFullName(), entry.id)
+                return entry.id, entry.obj
+            end
+        end
     end
 
     print("DEBUG: no bed found")

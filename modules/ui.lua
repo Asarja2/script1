@@ -1027,7 +1027,7 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
                     autofarmLoop = task.spawn(function()
                         while autofarmEnabled do
                             pcall(autofarm)
-                            task.wait(actionBusy and 2 or 4)
+                            task.wait(2)
                         end
                         autofarmLoop = nil
                     end)

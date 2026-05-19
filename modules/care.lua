@@ -42,7 +42,6 @@ local function resolveTarget(obj)
 end
 
 local function findUseBlockByKeyword(keywords)
-    local fallback
     for _,obj in pairs(workspace:GetDescendants()) do
         local furnitureId = getFurnitureId(obj)
         if furnitureId then
@@ -57,20 +56,10 @@ local function findUseBlockByKeyword(keywords)
                     end
                 end
             end
-            if not fallback then
-                local target = resolveTarget(obj)
-                if target then
-                    fallback = {id = furnitureId, target = target}
-                end
-            end
         end
     end
-    if fallback then
-        print("DEBUG: using fallback furniture", fallback.id, fallback.target:GetFullName())
-    else
-        print("DEBUG: no furniture fallback found")
-    end
-    return fallback and fallback.id, fallback and fallback.target
+    print("DEBUG: no matching furniture found")
+    return nil, nil
 end
 
 function Care.FindFood()
