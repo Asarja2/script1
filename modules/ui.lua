@@ -198,13 +198,37 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
     local actionBusy = false
     local track = PetState.TRACKED_AILMENTS
 
-    local function getPet()
-        if not selectedPetName then
-            return nil
+    local function refreshPetDropdown()
+        if not PetDropdown then
+            return
         end
-        local p = Pets.FindPetByName(selectedPetName)
-        if p and p.Parent and p:IsDescendantOf(workspace) then
-            return p
+        local options = {}
+        for _, p in ipairs(Pets.GetPets()) do
+            table.insert(options, p.Name)
+        end
+        if #options == 0 then
+            return
+        end
+        PetDropdown:Refresh(options)
+        if not selectedPetName or not table.find(options, selectedPetName) then
+            selectedPetName = options[1]
+        end
+        PetDropdown:Set({selectedPetName})
+    end
+
+    local function getPet()
+        if selectedPetName then
+            local p = Pets.FindPetByName(selectedPetName)
+            if p and p.Parent and p:IsDescendantOf(workspace) then
+                return p
+            end
+        end
+        refreshPetDropdown()
+        if selectedPetName then
+            local p = Pets.FindPetByName(selectedPetName)
+            if p and p.Parent and p:IsDescendantOf(workspace) then
+                return p
+            end
         end
         return nil
     end
@@ -262,21 +286,32 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
             return false
         end
 
-        if TeamSpawn then
-            pcall(function()
-                TeamSpawn:InvokeServer()
-            end)
+        -- Check distance from player to furniture before deciding to TP
+        local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+        local shouldTeleport = false
+        if root then
+            local distance = (root.Position - cf.Position).Magnitude
+            -- Only teleport if furniture is more than 100 studs away (streaming not loaded)
+            shouldTeleport = distance > 100
         end
 
-        local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-        if root then
-            root.CFrame = cf * CFrame.new(0, 0, -5)
+        if shouldTeleport then
+            if TeamSpawn then
+                pcall(function()
+                    TeamSpawn:InvokeServer()
+                end)
+            end
+            if root then
+                root.CFrame = cf * CFrame.new(0, 0, -5)
+            end
         end
 
         return pcall(function()
             ActivateFurniture:InvokeServer(player, id, partName, {cframe = cf}, pet)
         end)
     end
+
+    local ToyIdLabel = nil
 
     local function getToyId()
         if Toys.getToyId then
@@ -286,6 +321,9 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
     end
 
     local function refreshToyLabel()
+        if not ToyIdLabel then
+            return
+        end
         local name = (Toys.getToyDisplayName and Toys.getToyDisplayName()) or "squeaky_bone_default"
         if Toys.hasEquipToy and Toys.hasEquipToy() then
             setLabel(ToyIdLabel, "Toy: " .. name .. "  ·  equip_manager", COLOR_ACTIVE)
@@ -330,16 +368,14 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
     local ControlsTab = Window:CreateTab("Controls", 0)
     local NeedsTab = Window:CreateTab("Pet Needs", 0)
     local ReqTab = Window:CreateTab("Requirements", 0)
+    local TpTab = Window:CreateTab("TP", 0)
 
     ControlsTab:CreateSection("Status")
     local StatusLabel = ControlsTab:CreateLabel("Status: Ready")
-    local ToyIdLabel = ControlsTab:CreateLabel("Toy: squeaky_bone_default")
 
     local function setStatus(t)
         setLabel(StatusLabel, "Status: " .. t, COLOR_DIM)
     end
-
-    refreshToyLabel()
 
     NeedsTab:CreateSection("Pet Status")
     local PetIdLabel = NeedsTab:CreateLabel("Selected: —")
@@ -385,6 +421,32 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
         Callback = function()
             pcall(refreshRequirements)
             setStatus("Requirements scanned")
+        end,
+    })
+
+    TpTab:CreateSection("Teleport Tests")
+    TpTab:CreateButton({
+        Name = "TP Beach",
+        Callback = function()
+            teleportToNamedTarget("beach")
+        end,
+    })
+    TpTab:CreateButton({
+        Name = "TP School",
+        Callback = function()
+            teleportToNamedTarget("school")
+        end,
+    })
+    TpTab:CreateButton({
+        Name = "TP Camping",
+        Callback = function()
+            teleportToNamedTarget("camping")
+        end,
+    })
+    TpTab:CreateButton({
+        Name = "TP Playground",
+        Callback = function()
+            teleportToNamedTarget("playground")
         end,
     })
 
@@ -595,6 +657,46 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
         return nil
     end
 
+    local function getTeleportTarget(name)
+        if name == "beach" then
+            local furniture = workspace:FindFirstChild("HouseInteriors")
+                and workspace.HouseInteriors:FindFirstChild("furniture")
+            local beachNode = furniture and furniture:FindFirstChild("nil/nil/MainMap!Default/false/f-28")
+            return beachNode and beachNode:FindFirstChild("Beach2024Log") or beachNode
+        elseif name == "school" then
+            return workspace:FindFirstChild("Interiors")
+                and workspace.Interiors:FindFirstChild("School")
+                and workspace.Interiors.School:FindFirstChild("Doors")
+                and workspace.Interiors.School.Doors:FindFirstChild("MainDoor")
+        elseif name == "camping" then
+            local furniture = workspace:FindFirstChild("HouseInteriors")
+                and workspace.HouseInteriors:FindFirstChild("furniture")
+            local campNode = furniture and furniture:FindFirstChild("nil/nil/MainMap!Default/false/f-5")
+            return campNode and campNode:FindFirstChild("SleepingBag") or campNode
+        elseif name == "playground" then
+            return workspace:FindFirstChild("StaticMap")
+                and workspace.StaticMap:FindFirstChild("Park")
+                and workspace.StaticMap.Park:FindFirstChild("Roundabout")
+                and workspace.StaticMap.Park.Roundabout:FindFirstChild("SeatsSpinModel")
+                and workspace.StaticMap.Park.Roundabout.SeatsSpinModel:FindFirstChild("Collisions")
+                and workspace.StaticMap.Park.Roundabout.SeatsSpinModel.Collisions:FindFirstChild("Collider")
+        end
+        return nil
+    end
+
+    local function teleportToNamedTarget(name)
+        local target = getTeleportTarget(name)
+        if not target then
+            setStatus("TP target not found: " .. name)
+            return
+        end
+        if teleportToSafePart(target) then
+            setStatus("Teleported to " .. name)
+        else
+            setStatus("Teleport failed: " .. name)
+        end
+    end
+
     local function teleportForSpecialNeed(pet)
         local target = findCustomTeleportTarget(pet)
         if not target then
@@ -795,42 +897,6 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
         end,
     })
 
-    ControlsTab:CreateSection("Toys")
-    ControlsTab:CreateButton({
-        Name = "Refresh Toy (equip_manager)",
-        Callback = function()
-            refreshToyLabel()
-            if Toys.hasEquipToy and Toys.hasEquipToy() then
-                setStatus("squeaky_bone_default ready")
-            else
-                setStatus("Open toys menu to sync equip_manager")
-            end
-        end,
-    })
-    ControlsTab:CreateButton({
-        Name = "Play Toy",
-        Callback = function()
-            local p = getPet()
-            if p then
-                runAction(function()
-                    doPlay(p)
-                end)
-            end
-        end,
-    })
-    ControlsTab:CreateButton({
-        Name = "Throw Toy (test)",
-        Callback = function()
-            local p = getPet()
-            if not p then
-                setStatus("Select a pet first")
-                return
-            end
-            runAction(function()
-                doThrow(p, true)
-            end)
-        end,
-    })
     ControlsTab:CreateSection("Autofarm")
     ControlsTab:CreateToggle({
         Name = "Autofarm",
@@ -872,7 +938,6 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
     end
 
     refreshRequirements()
-    refreshToyLabel()
     refreshAilments()
     Rayfield:LoadConfiguration()
     pcall(function()
