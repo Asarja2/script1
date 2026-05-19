@@ -338,9 +338,13 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
             return false
         end
 
-        print("[ui] enterHouseViaDoor: flying to door", safeName(doorPart))
-        -- start above the door so you "fly"
-        char:PivotTo(hrp.CFrame + Vector3.new(0, 10, 0))
+        print("[ui] enterHouseViaDoor: teleporting near door", safeName(doorPart))
+        -- teleport relative to the door, not relative to the current HRP position.
+        local startCFrame = doorPart.CFrame * CFrame.new(0, 10, -10)
+        char:PivotTo(startCFrame)
+
+        -- allow streaming / touch regions to load before moving
+        task.wait(0.3)
 
         local RunService = game:GetService("RunService")
         local speed = 120
@@ -1032,10 +1036,21 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
         local hrp = char:FindFirstChild("HumanoidRootPart")
         if not hrp then return false end
 
-        -- TP to main area (beach/camp loading point)
-        local targetCF = CFrame.new(2978.0874, 6534.81934, 12039.1875, 0.999999702, 0, 0.000776898232, 0, 1, 0, -0.000776898232, 0, 0.999999702)
-        char:PivotTo(targetCF)
-        
+        -- If we are inside the house, teleport to the outside door entrance instead of a hardcoded coordinate.
+        if workspace:FindFirstChild("HouseInteriors") and hrp:IsDescendantOf(workspace.HouseInteriors) then
+            local doorPart = workspace:FindFirstChild("HouseExteriors")
+                and workspace.HouseExteriors:FindFirstChild("1")
+                and workspace.HouseExteriors["1"].Micro
+                and workspace.HouseExteriors["1"].Micro:FindFirstChild("Doors")
+                and workspace.HouseExteriors["1"].Micro.Doors:FindFirstChild("MainDoor")
+                and workspace.HouseExteriors["1"].Micro.Doors.MainDoor:FindFirstChild("WorkingParts")
+                and workspace.HouseExteriors["1"].Micro.Doors.MainDoor.WorkingParts:FindFirstChild("TouchToEnter")
+            if doorPart then
+                char:PivotTo(doorPart.CFrame * CFrame.new(0, 10, -10))
+                task.wait(0.3)
+            end
+        end
+
         -- Wait for beach/camp furniture to load
         task.wait(6)
         return true
@@ -1069,8 +1084,8 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
                 local speed = 120
                 local stopDistance = 2
                 local conn
-                -- start above the door
-                char:PivotTo(hrp.CFrame + Vector3.new(0, 10, 0))
+                -- teleport near the target door, then fly in
+                char:PivotTo(tpPart.CFrame * CFrame.new(0, 10, -10))
                 task.wait(0.5)
                 conn = RunService.Heartbeat:Connect(function(dt)
                     if not hrp or not hrp.Parent then
@@ -1160,7 +1175,7 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
                 local speed = 120
                 local stopDistance = 2
                 local conn
-                char:PivotTo(hrp.CFrame + Vector3.new(0, 10, 0))
+                char:PivotTo(tpPart.CFrame * CFrame.new(0, 10, -10))
                 task.wait(0.5)
                 conn = RunService.Heartbeat:Connect(function(dt)
                     if not hrp or not hrp.Parent then
