@@ -189,7 +189,6 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
     local EjectBaby = Remotes.EjectBaby
     local ActivateFurniture = Remotes.ActivateFurniture
     local UnsubscribeFromHouse = Remotes.UnsubscribeFromHouse
-    local TeamSpawn = Remotes.TeamSpawn
     local DataChanged = Remotes.DataChanged
 
     local selectedPetName = nil
@@ -252,6 +251,67 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
         return bp and bp.CFrame
     end
 
+    local function enterHouseViaDoor()
+        -- Unsubscribe from house
+        if UnsubscribeFromHouse then
+            pcall(function()
+                UnsubscribeFromHouse:InvokeServer(player, true)
+            end)
+        end
+        task.wait(2)
+
+        local char = player.Character
+        if not char then return false end
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        if not hrp then return false end
+
+        -- Find door
+        local doorPart = workspace:FindFirstChild("HouseExteriors")
+            and workspace.HouseExteriors:FindFirstChild("1")
+            and workspace.HouseExteriors["1"]:FindFirstChild("Micro")
+            and workspace.HouseExteriors["1"].Micro:FindFirstChild("Doors")
+            and workspace.HouseExteriors["1"].Micro.Doors:FindFirstChild("MainDoor")
+            and workspace.HouseExteriors["1"].Micro.Doors.MainDoor:FindFirstChild("WorkingParts")
+            and workspace.HouseExteriors["1"].Micro.Doors.MainDoor.WorkingParts:FindFirstChild("TouchToEnter")
+
+        if not doorPart then
+            setStatus("Door not found")
+            return false
+        end
+
+        -- Start above the door
+        char:PivotTo(hrp.CFrame + Vector3.new(0, 10, 0))
+        task.wait(0.5)
+
+        -- Fly towards door
+        local RunService = game:GetService("RunService")
+        local speed = 120
+        local stopDistance = 2
+        local conn
+        
+        conn = RunService.Heartbeat:Connect(function(dt)
+            if not hrp or not hrp.Parent then
+                conn:Disconnect()
+                return
+            end
+            
+            local direction = (doorPart.Position - hrp.Position)
+            local distance = direction.Magnitude
+
+            if distance <= stopDistance then
+                conn:Disconnect()
+                return
+            end
+
+            direction = direction.Unit
+            hrp.CFrame = hrp.CFrame + direction * speed * dt
+        end)
+
+        -- Wait for door entry
+        task.wait(5)
+        return true
+    end
+
     local function useFurniture(needType, pet)
         pet = pet or getPet()
         if not pet then
@@ -280,18 +340,15 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
             return false
         end
 
-        -- Try to find furniture locally first
+        -- Try to find furniture locally
         id, target = findFunc()
 
-        -- If not found, TP home and try again (furniture may be out of streaming range)
+        -- If not found, enter house and try again
         if not id or not target then
-            setStatus("Furniture not found, TPing home...")
-            if TeamSpawn then
-                pcall(function()
-                    TeamSpawn:InvokeServer()
-                end)
+            setStatus("Furniture not found, entering house...")
+            if not enterHouseViaDoor() then
+                return false
             end
-            task.wait(5)  -- Wait for home furniture to load
             id, target = findFunc()
         end
 
@@ -302,28 +359,6 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
         local cf = resolveCFrame(target, partName)
         if not cf then
             return false
-        end
-
-        -- Check distance from player to furniture before deciding to TP
-        local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-        local shouldTeleport = false
-        if root then
-            local distance = (root.Position - cf.Position).Magnitude
-            -- Only teleport if furniture is more than 100 studs away (streaming not loaded)
-            shouldTeleport = distance > 100
-        end
-
-        if shouldTeleport then
-            -- Use TeamAPI/Spawn remote and wait for furniture to load
-            if TeamSpawn then
-                pcall(function()
-                    TeamSpawn:InvokeServer()
-                end)
-            end
-            task.wait(5)  -- Wait for furniture to load
-            if root then
-                root.CFrame = cf * CFrame.new(0, 0, -5)
-            end
         end
 
         return pcall(function()
@@ -712,53 +747,72 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
         return nil
     end
 
-    local function teleportForSpecialNeed(pet)
-        setStatus("Teleporting for special need")
-        
-        -- Unsubscribe from house to load special area furniture
+    local function exitHouseToMainArea()
+        -- Unsubscribe from house to load special areas
         if UnsubscribeFromHouse then
             pcall(function()
                 UnsubscribeFromHouse:InvokeServer(player, true)
             end)
         end
-        task.wait(5)  -- Wait for furniture to load
+        task.wait(2)
+
+        local char = player.Character
+        if not char then return false end
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        if not hrp then return false end
+
+        -- TP to main area (beach/camp loading point)
+        local targetCF = CFrame.new(2978.0874, 6534.81934, 12039.1875, 0.999999702, 0, 0.000776898232, 0, 1, 0, -0.000776898232, 0, 0.999999702)
+        char:PivotTo(targetCF)
         
-        -- Find target AFTER unsubscribing and waiting
+        -- Wait for beach/camp furniture to load
+        task.wait(5)
+        return true
+    end
+
+    local function teleportForSpecialNeed(pet)
+        setStatus("Teleporting for special need")
+        
+        -- Exit house to load special areas
+        if not exitHouseToMainArea() then
+            setStatus("Failed to exit house")
+            return false
+        end
+        
+        -- Find target AFTER exiting and waiting
         local target = findCustomTeleportTarget(pet)
         if not target then
             setStatus("Special area target not found")
             return false
         end
         
-        -- TP to furniture object first
+        -- TP to furniture object
         if teleportToSafePart(target) then
-            task.wait(1)  -- Wait after teleporting before activating
+            task.wait(1)
         end
         
         return true
     end
 
     local function teleportToNamedTargetAsync(name)
-        setStatus("Loading furniture for " .. name)
+        setStatus("Loading " .. name .. " furniture")
         
-        -- Unsubscribe from house to load special area furniture
-        if UnsubscribeFromHouse then
-            pcall(function()
-                UnsubscribeFromHouse:InvokeServer(player, true)
-            end)
+        -- Exit house to load special areas
+        if not exitHouseToMainArea() then
+            setStatus("Failed to exit house")
+            return
         end
-        task.wait(5)  -- Wait for furniture to load
         
-        -- Now find the target after furniture is loaded
+        -- Find target AFTER exiting and waiting
         local target = getTeleportTarget(name)
         if not target then
             setStatus("TP target not found: " .. name)
             return
         end
         
-        -- TP to furniture object first
+        -- TP to furniture object
         if teleportToSafePart(target) then
-            task.wait(1)  -- Wait after teleporting
+            task.wait(1)
             setStatus("Teleported to " .. name)
         else
             setStatus("Teleport failed: " .. name)
