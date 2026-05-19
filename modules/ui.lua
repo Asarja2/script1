@@ -389,6 +389,46 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
         -- Try to find furniture locally
         id, target = findFunc()
 
+        -- Helper: get ancestor text for target to verify it's the correct furniture
+        local function getAncestorTextLocal(instance)
+            local parts = {}
+            local current = instance
+            while current do
+                table.insert(parts, current.Name:lower())
+                current = current.Parent
+            end
+            return table.concat(parts, " ")
+        end
+
+        local NEED_KEYWORDS = {
+            food = {"food", "petfood", "bowl", "feeder", "kitchen"},
+            drink = {"water", "bowl", "fountain", "tap", "waterbowl"},
+            shower = {"shower", "bath", "bathtub", "petbathtub"},
+            toilet = {"toilet", "restroom", "wc"},
+            bed = {"bed", "sleep", "mattress"},
+        }
+
+        -- If a target was found, ensure it matches the need more specifically
+        if id and target then
+            local okMatch = false
+            local keywords = NEED_KEYWORDS[needType]
+            if keywords then
+                local text = getAncestorTextLocal(target)
+                for _,kw in ipairs(keywords) do
+                    if text:find(kw, 1, true) then
+                        okMatch = true
+                        break
+                    end
+                end
+            else
+                okMatch = true
+            end
+            if not okMatch then
+                print("[ui] useFurniture: found target does not match needType, ignoring:", needType, id, target and target:GetFullName() or "nil")
+                id, target = nil, nil
+            end
+        end
+
         -- If the found target is part of HouseInteriors, prefer entering the house first
         if target and workspace:FindFirstChild("HouseInteriors") and target:IsDescendantOf(workspace.HouseInteriors) then
             print("[ui] useFurniture: target inside HouseInteriors — entering house for", needType)
@@ -411,6 +451,23 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
                     print("[ui] useFurniture: enterHouseViaDoor failed on attempt", i)
                 else
                     id, target = findFunc()
+                    -- verify match again after re-scan
+                    if id and target then
+                        local text = getAncestorTextLocal(target)
+                        local keywords = NEED_KEYWORDS[needType]
+                        local okMatch = false
+                        if keywords then
+                            for _,kw in ipairs(keywords) do
+                                if text:find(kw, 1, true) then okMatch = true break end
+                            end
+                        else
+                            okMatch = true
+                        end
+                        if not okMatch then
+                            print("[ui] useFurniture: rescan target doesn't match needType, ignoring:", id, target and target:GetFullName() or "nil")
+                            id, target = nil, nil
+                        end
+                    end
                     print("[ui] useFurniture: rescan result:", id, target and target:GetFullName() or "nil")
                     if id and target then
                         found = true
@@ -958,31 +1015,62 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
         -- If the target is a door touch part (TouchToEnter), fly to it instead of safe-plate teleport
         local tpPart = resolveTeleportPart(target)
         if tpPart and tpPart.Name == "TouchToEnter" then
-            local char = player.Character or player.CharacterAdded:Wait()
-            local hrp = char:WaitForChild("HumanoidRootPart")
             local RunService = game:GetService("RunService")
-            local speed = 120
-            local stopDistance = 2
-            local conn
-            -- start above the door
-            char:PivotTo(hrp.CFrame + Vector3.new(0, 10, 0))
-            task.wait(0.5)
-            conn = RunService.Heartbeat:Connect(function(dt)
-                if not hrp or not hrp.Parent then
-                    conn:Disconnect()
-                    return
+            local attempts = 3
+            for attempt = 1, attempts do
+                print("[ui] teleportForSpecialNeed: flying to TouchToEnter attempt", attempt)
+                local char = player.Character or player.CharacterAdded:Wait()
+                local hrp = char:WaitForChild("HumanoidRootPart")
+                local speed = 120
+                local stopDistance = 2
+                local conn
+                -- start above the door
+                char:PivotTo(hrp.CFrame + Vector3.new(0, 10, 0))
+                task.wait(0.5)
+                conn = RunService.Heartbeat:Connect(function(dt)
+                    if not hrp or not hrp.Parent then
+                        conn:Disconnect()
+                        return
+                    end
+                    if not tpPart or not tpPart.Parent then
+                        conn:Disconnect()
+                        return
+                    end
+                    local direction = (tpPart.Position - hrp.Position)
+                    local distance = direction.Magnitude
+                    if distance <= stopDistance then
+                        conn:Disconnect()
+                        return
+                    end
+                    direction = direction.Unit
+                    hrp.CFrame = hrp.CFrame + direction * speed * dt
+                end)
+
+                -- Wait up to 15s for the TouchToEnter to disappear (indicates the salon/school opened)
+                local start = os.clock()
+                local success = false
+                while os.clock() - start < 15 do
+                    if not tpPart or not tpPart.Parent then
+                        success = true
+                        break
+                    end
+                    task.wait(0.5)
                 end
-                local direction = (tpPart.Position - hrp.Position)
-                local distance = direction.Magnitude
-                if distance <= stopDistance then
-                    conn:Disconnect()
-                    return
+                if conn then
+                    pcall(function() conn:Disconnect() end)
                 end
-                direction = direction.Unit
-                hrp.CFrame = hrp.CFrame + direction * speed * dt
-            end)
-            task.wait(5)
-            return true
+                if success then
+                    print("[ui] teleportForSpecialNeed: TouchToEnter disappeared — success")
+                    return true
+                else
+                    print("[ui] teleportForSpecialNeed: TouchToEnter still present after 15s, retrying")
+                    task.wait(1)
+                    -- refresh target reference in case the instance changed
+                    target = findCustomTeleportTarget(pet)
+                    tpPart = resolveTeleportPart(target)
+                end
+            end
+            return false
         end
 
         -- TP to furniture object
@@ -1014,36 +1102,61 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
             return
         end
 
-        -- If the target is a door touch part, fly to it like the school snippet
+        -- If the target is a door touch part, fly to it and wait for it to disappear (max 15s), retry a few times
         local tpPart = resolveTeleportPart(target)
         if tpPart and tpPart.Name == "TouchToEnter" then
-            setStatus("Flying to " .. name .. " door")
-            print("[ui] flying to TouchToEnter for", name, tpPart:GetFullName())
-            local char = player.Character or player.CharacterAdded:Wait()
-            local hrp = char:WaitForChild("HumanoidRootPart")
             local RunService = game:GetService("RunService")
-            local speed = 120
-            local stopDistance = 2
-            local conn
-            -- start above the door
-            char:PivotTo(hrp.CFrame + Vector3.new(0, 10, 0))
-            task.wait(0.5)
-            conn = RunService.Heartbeat:Connect(function(dt)
-                if not hrp or not hrp.Parent then
-                    conn:Disconnect()
-                    return
+            local attempts = 3
+            for attempt = 1, attempts do
+                print("[ui] teleportToNamedTargetAsync: flying to TouchToEnter for", name, "attempt", attempt)
+                setStatus("Flying to " .. name .. " door")
+                local char = player.Character or player.CharacterAdded:Wait()
+                local hrp = char:WaitForChild("HumanoidRootPart")
+                local speed = 120
+                local stopDistance = 2
+                local conn
+                char:PivotTo(hrp.CFrame + Vector3.new(0, 10, 0))
+                task.wait(0.5)
+                conn = RunService.Heartbeat:Connect(function(dt)
+                    if not hrp or not hrp.Parent then
+                        conn:Disconnect()
+                        return
+                    end
+                    if not tpPart or not tpPart.Parent then
+                        conn:Disconnect()
+                        return
+                    end
+                    local direction = (tpPart.Position - hrp.Position)
+                    local distance = direction.Magnitude
+                    if distance <= stopDistance then
+                        conn:Disconnect()
+                        return
+                    end
+                    direction = direction.Unit
+                    hrp.CFrame = hrp.CFrame + direction * speed * dt
+                end)
+
+                local start = os.clock()
+                local success = false
+                while os.clock() - start < 15 do
+                    if not tpPart or not tpPart.Parent then
+                        success = true
+                        break
+                    end
+                    task.wait(0.5)
                 end
-                local direction = (tpPart.Position - hrp.Position)
-                local distance = direction.Magnitude
-                if distance <= stopDistance then
-                    conn:Disconnect()
+                if conn then pcall(function() conn:Disconnect() end) end
+                if success then
+                    setStatus("Arrived at " .. name .. " door")
                     return
+                else
+                    print("[ui] teleportToNamedTargetAsync: TouchToEnter still present after 15s, retrying")
+                    task.wait(1)
+                    target = getTeleportTarget(name)
+                    tpPart = resolveTeleportPart(target)
                 end
-                direction = direction.Unit
-                hrp.CFrame = hrp.CFrame + direction * speed * dt
-            end)
-            task.wait(5)
-            setStatus("Arrived at " .. name .. " door")
+            end
+            setStatus("Failed to reach " .. name .. " door")
             return
         end
 
