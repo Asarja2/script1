@@ -273,7 +273,7 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
         print("[ui] enterHouseViaDoor: attempting house entry")
 
         local char = player.Character or player.CharacterAdded:Wait()
-        local hrp = char and char:WaitForChild("HumanoidRootPart", 5)
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
         if not hrp then
             print("[ui] enterHouseViaDoor: missing HumanoidRootPart")
             return false
@@ -326,7 +326,7 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
                     print("[ui] enterHouseViaDoor: falling back to MainDoor part", safeName(fp))
                     -- place player above the fallback part
                     local char = player.Character or player.CharacterAdded:Wait()
-                    local hrp = char and char:WaitForChild("HumanoidRootPart", 5)
+                    local hrp = char and char:FindFirstChild("HumanoidRootPart")
                     if hrp then
                         char:PivotTo(fp.CFrame + Vector3.new(0, 5, 0))
                         task.wait(1)
@@ -338,13 +338,9 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
             return false
         end
 
-        print("[ui] enterHouseViaDoor: teleporting near door", safeName(doorPart))
-        -- teleport relative to the door, not relative to the current HRP position.
-        local startCFrame = doorPart.CFrame * CFrame.new(0, 10, -10)
-        char:PivotTo(startCFrame)
-
-        -- allow streaming / touch regions to load before moving
-        task.wait(0.3)
+        print("[ui] enterHouseViaDoor: flying to door", safeName(doorPart))
+        -- start above the door so you "fly"
+        char:PivotTo(hrp.CFrame + Vector3.new(0, 10, 0))
 
         local RunService = game:GetService("RunService")
         local speed = 120
@@ -370,13 +366,8 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
         end)
 
         task.wait(5)
-        if not hrp or not hrp.Parent then
-            print("[ui] enterHouseViaDoor: HRP gone before arrival")
-            return false
-        end
-        local finalDistance = (doorPart.Position - hrp.Position).Magnitude
-        print("[ui] enterHouseViaDoor: arrived at door, distance=", finalDistance)
-        return finalDistance <= stopDistance + 1
+        print("[ui] enterHouseViaDoor: arrived at door")
+        return true
     end
 
     local function useFurniture(needType, pet)
@@ -1038,24 +1029,13 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
 
         local char = player.Character
         if not char then return false end
-        local hrp = char:WaitForChild("HumanoidRootPart", 5)
+        local hrp = char:FindFirstChild("HumanoidRootPart")
         if not hrp then return false end
 
-        -- If we are inside the house, teleport to the outside door entrance instead of a hardcoded coordinate.
-        if workspace:FindFirstChild("HouseInteriors") and hrp:IsDescendantOf(workspace.HouseInteriors) then
-            local doorPart = workspace:FindFirstChild("HouseExteriors")
-                and workspace.HouseExteriors:FindFirstChild("1")
-                and workspace.HouseExteriors["1"].Micro
-                and workspace.HouseExteriors["1"].Micro:FindFirstChild("Doors")
-                and workspace.HouseExteriors["1"].Micro.Doors:FindFirstChild("MainDoor")
-                and workspace.HouseExteriors["1"].Micro.Doors.MainDoor:FindFirstChild("WorkingParts")
-                and workspace.HouseExteriors["1"].Micro.Doors.MainDoor.WorkingParts:FindFirstChild("TouchToEnter")
-            if doorPart then
-                char:PivotTo(doorPart.CFrame * CFrame.new(0, 10, -10))
-                task.wait(0.3)
-            end
-        end
-
+        -- TP to main area (beach/camp loading point)
+        local targetCF = CFrame.new(2978.0874, 6534.81934, 12039.1875, 0.999999702, 0, 0.000776898232, 0, 1, 0, -0.000776898232, 0, 0.999999702)
+        char:PivotTo(targetCF)
+        
         -- Wait for beach/camp furniture to load
         task.wait(6)
         return true
@@ -1089,8 +1069,8 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
                 local speed = 120
                 local stopDistance = 2
                 local conn
-                -- teleport near the target door, then fly in
-                char:PivotTo(tpPart.CFrame * CFrame.new(0, 10, -10))
+                -- start above the door
+                char:PivotTo(hrp.CFrame + Vector3.new(0, 10, 0))
                 task.wait(0.5)
                 conn = RunService.Heartbeat:Connect(function(dt)
                     if not hrp or not hrp.Parent then
@@ -1180,7 +1160,7 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
                 local speed = 120
                 local stopDistance = 2
                 local conn
-                char:PivotTo(tpPart.CFrame * CFrame.new(0, 10, -10))
+                char:PivotTo(hrp.CFrame + Vector3.new(0, 10, 0))
                 task.wait(0.5)
                 conn = RunService.Heartbeat:Connect(function(dt)
                     if not hrp or not hrp.Parent then
@@ -1397,9 +1377,7 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
             if not p then
                 return
             end
-            runAction(function()
-                useFurniture("food", p)
-            end)
+            useFurniture("food", p)
         end,
     })
     ControlsTab:CreateButton({
@@ -1409,9 +1387,7 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
             if not p then
                 return
             end
-            runAction(function()
-                useFurniture("drink", p)
-            end)
+            useFurniture("drink", p)
         end,
     })
     ControlsTab:CreateButton({
@@ -1421,9 +1397,7 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
             if not p then
                 return
             end
-            runAction(function()
-                useFurniture("shower", p)
-            end)
+            useFurniture("shower", p)
         end,
     })
     ControlsTab:CreateButton({
@@ -1433,9 +1407,7 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
             if not p then
                 return
             end
-            runAction(function()
-                useFurniture("toilet", p)
-            end)
+            useFurniture("toilet", p)
         end,
     })
     ControlsTab:CreateButton({
@@ -1445,9 +1417,7 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
             if not p then
                 return
             end
-            runAction(function()
-                useFurniture("bed", p)
-            end)
+            useFurniture("bed", p)
         end,
     })
 
