@@ -279,6 +279,21 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
         end
 
         if not id or not target then
+            -- If toilet not found, TP home and try again
+            if needType == "toilet" then
+                setStatus("Toilet not found, TPing home...")
+                if TeamSpawn then
+                    pcall(function()
+                        TeamSpawn:InvokeServer()
+                    end)
+                end
+                task.wait(5)  -- Wait for home furniture to load
+                id, target = Care.FindToilet()
+                partName = "Seat1"
+            end
+        end
+
+        if not id or not target then
             return false
         end
 
@@ -696,10 +711,6 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
     end
 
     local function teleportForSpecialNeed(pet)
-        local target = findCustomTeleportTarget(pet)
-        if not target then
-            return false
-        end
         setStatus("Teleporting for special need")
         
         -- Unsubscribe from house to load special area furniture
@@ -710,7 +721,19 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
         end
         task.wait(5)  -- Wait for furniture to load
         
-        return teleportToSafePart(target)
+        -- Find target AFTER unsubscribing and waiting
+        local target = findCustomTeleportTarget(pet)
+        if not target then
+            setStatus("Special area target not found")
+            return false
+        end
+        
+        -- TP to furniture object first
+        if teleportToSafePart(target) then
+            task.wait(1)  -- Wait after teleporting before activating
+        end
+        
+        return true
     end
 
     local function teleportToNamedTargetAsync(name)
@@ -730,7 +753,10 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
             setStatus("TP target not found: " .. name)
             return
         end
+        
+        -- TP to furniture object first
         if teleportToSafePart(target) then
+            task.wait(1)  -- Wait after teleporting
             setStatus("Teleported to " .. name)
         else
             setStatus("Teleport failed: " .. name)
