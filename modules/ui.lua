@@ -188,6 +188,7 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
     local HoldBaby = Remotes.HoldBaby
     local EjectBaby = Remotes.EjectBaby
     local ActivateFurniture = Remotes.ActivateFurniture
+    local TeamSpawn = Remotes.TeamSpawn
     local DataChanged = Remotes.DataChanged
 
     local selectedPetName = nil
@@ -259,6 +260,12 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
         local cf = resolveCFrame(target, partName)
         if not cf then
             return false
+        end
+
+        if TeamSpawn then
+            pcall(function()
+                TeamSpawn:InvokeServer()
+            end)
         end
 
         local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
@@ -576,7 +583,7 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
             return campNode and campNode:FindFirstChild("SleepingBag") or campNode
         end
 
-        if petHasActiveKey(pet, "playground", "park", "roundabout") then
+        if petHasActiveKey(pet, "playground", "park", "roundabout", "bored") then
             return workspace:FindFirstChild("StaticMap")
                 and workspace.StaticMap:FindFirstChild("Park")
                 and workspace.StaticMap.Park:FindFirstChild("Roundabout")
