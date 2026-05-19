@@ -255,7 +255,7 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
     end
 
     local function enterHouseViaDoor()
-        -- Unsubscribe from house
+        -- Unsubscribe from house to load house entry objects
         if UnsubscribeFromHouse then
             pcall(function()
                 UnsubscribeFromHouse:InvokeServer(player, true)
@@ -263,18 +263,15 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
         end
         task.wait(2)
 
-        local char = player.Character
-        if not char then return false end
-        local hrp = char:FindFirstChild("HumanoidRootPart")
-        if not hrp then return false end
+        local char = player.Character or player.CharacterAdded:Wait()
+        local hrp = char:WaitForChild("HumanoidRootPart")
 
-        -- Find door
-        local doorPart = workspace:FindFirstChild("HouseExteriors")
-            and workspace.HouseExteriors:FindFirstChild("1")
-            and workspace.HouseExteriors["1"]:FindFirstChild("Micro")
-            and workspace.HouseExteriors["1"].Micro:FindFirstChild("Doors")
-            and workspace.HouseExteriors["1"].Micro.Doors:FindFirstChild("MainDoor")
-            and workspace.HouseExteriors["1"].Micro.Doors.MainDoor:FindFirstChild("WorkingParts")
+        local doorPart = workspace.HouseExteriors
+            and workspace.HouseExteriors["1"]
+            and workspace.HouseExteriors["1"].Micro
+            and workspace.HouseExteriors["1"].Micro.Doors
+            and workspace.HouseExteriors["1"].Micro.Doors.MainDoor
+            and workspace.HouseExteriors["1"].Micro.Doors.MainDoor.WorkingParts
             and workspace.HouseExteriors["1"].Micro.Doors.MainDoor.WorkingParts:FindFirstChild("TouchToEnter")
 
         if not doorPart then
@@ -291,13 +288,13 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
         local speed = 120
         local stopDistance = 2
         local conn
-        
+
         conn = RunService.Heartbeat:Connect(function(dt)
             if not hrp or not hrp.Parent then
                 conn:Disconnect()
                 return
             end
-            
+
             local direction = (doorPart.Position - hrp.Position)
             local distance = direction.Magnitude
 
@@ -310,7 +307,6 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
             hrp.CFrame = hrp.CFrame + direction * speed * dt
         end)
 
-        -- Wait for door entry
         task.wait(5)
         return true
     end
@@ -852,48 +848,38 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
         refreshAilments()
 
         if PetState.isHungry(pet) then
-            if not Requirements.canHandleNeed("hungry") then
-                setStatus("Missing: Food Bowl")
-                return
-            end
             setStatus("Feeding")
-            useFurniture("food", pet)
+            if not useFurniture("food", pet) then
+                setStatus("Missing: Food Bowl")
+            end
             return
         end
         if PetState.isThirsty(pet) then
-            if not Requirements.canHandleNeed("thirsty") then
-                setStatus("Missing: Water Bowl")
-                return
-            end
             setStatus("Drinking")
-            useFurniture("drink", pet)
+            if not useFurniture("drink", pet) then
+                setStatus("Missing: Water Bowl")
+            end
             return
         end
         if PetState.isToilet(pet) then
-            if not Requirements.canHandleNeed("toilet") then
-                setStatus("Missing: Toilet")
-                return
-            end
             setStatus("Toilet")
-            useFurniture("toilet", pet)
+            if not useFurniture("toilet", pet) then
+                setStatus("Missing: Toilet")
+            end
             return
         end
         if PetState.isDirty(pet) then
-            if not Requirements.canHandleNeed("dirty") then
-                setStatus("Missing: Shower")
-                return
-            end
             setStatus("Shower")
-            useFurniture("shower", pet)
+            if not useFurniture("shower", pet) then
+                setStatus("Missing: Shower")
+            end
             return
         end
         if PetState.isSleepy(pet) then
-            if not Requirements.canHandleNeed("sleepy") then
-                setStatus("Missing: Pet Bed")
-                return
-            end
             setStatus("Sleep")
-            useFurniture("bed", pet)
+            if not useFurniture("bed", pet) then
+                setStatus("Missing: Pet Bed")
+            end
             return
         end
         if teleportForSpecialNeed(pet) then
