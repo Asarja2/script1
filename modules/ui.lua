@@ -27,6 +27,9 @@ local AILMENT_DISPLAY = {
     thirsty = "Thirst",
     toilet = "Toilet",
     school = "School",
+    beach_party = "Beach Party",
+    camping = "Camping",
+    playground = "Playground",
     pet_me = "Pet Me",
     play = "Play",
     walk = "Walk",
@@ -656,6 +659,19 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
         return target:FindFirstChildWhichIsA("BasePart", true)
     end
 
+    local function findDescendantByNames(root, names)
+        if not root then
+            return nil
+        end
+        for _, name in ipairs(names) do
+            local found = root:FindFirstChild(name, true)
+            if found then
+                return found
+            end
+        end
+        return nil
+    end
+
     local function teleportToSafePart(target)
         local part = resolveTeleportPart(target)
         if not part then
@@ -725,7 +741,10 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
             local furniture = workspace:FindFirstChild("HouseInteriors")
                 and workspace.HouseInteriors:FindFirstChild("furniture")
             local beachNode = furniture and furniture:FindFirstChild("nil/nil/MainMap!Default/false/f-28")
-            return beachNode and beachNode:FindFirstChild("Beach2024Log") or beachNode
+            if not beachNode then
+                return nil
+            end
+            return beachNode:FindFirstChild("Beach2024Log", true) or beachNode
         elseif name == "school" then
             return workspace:FindFirstChild("Interiors")
                 and workspace.Interiors:FindFirstChild("School")
@@ -735,7 +754,10 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
             local furniture = workspace:FindFirstChild("HouseInteriors")
                 and workspace.HouseInteriors:FindFirstChild("furniture")
             local campNode = furniture and furniture:FindFirstChild("nil/nil/MainMap!Default/false/f-5")
-            return campNode and campNode:FindFirstChild("SleepingBag") or campNode
+            if not campNode then
+                return nil
+            end
+            return campNode:FindFirstChild("SleepingBag", true) or campNode
         elseif name == "playground" then
             return workspace:FindFirstChild("StaticMap")
                 and workspace.StaticMap:FindFirstChild("Park")
@@ -766,7 +788,7 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
         char:PivotTo(targetCF)
         
         -- Wait for beach/camp furniture to load
-        task.wait(5)
+        task.wait(6)
         return true
     end
 
