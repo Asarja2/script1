@@ -30,6 +30,7 @@ local AILMENT_DISPLAY = {
     beach_party = "Beach Party",
     camping = "Camping",
     playground = "Playground",
+    salon = "Salon",
     pet_me = "Pet Me",
     play = "Play",
     walk = "Walk",
@@ -255,13 +256,9 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
     end
 
     local function enterHouseViaDoor()
-        -- Unsubscribe from house to load house entry objects
-        if UnsubscribeFromHouse then
-            pcall(function()
-                UnsubscribeFromHouse:InvokeServer(player, true)
-            end)
+        if not exitHouseToMainArea() then
+            return false
         end
-        task.wait(2)
 
         local char = player.Character or player.CharacterAdded:Wait()
         local hrp = char:WaitForChild("HumanoidRootPart")
@@ -342,9 +339,9 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
         -- Try to find furniture locally
         id, target = findFunc()
 
-        -- If not found, enter house and try again
+        -- If not found, TP to house and try again
         if not id or not target then
-            setStatus("Furniture not found, entering house...")
+            setStatus("TPing to house for " .. needType)
             if not enterHouseViaDoor() then
                 return false
             end
@@ -508,6 +505,14 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
         Callback = function()
             task.spawn(function()
                 teleportToNamedTargetAsync("playground")
+            end)
+        end,
+    })
+    TpTab:CreateButton({
+        Name = "TP Salon",
+        Callback = function()
+            task.spawn(function()
+                teleportToNamedTargetAsync("salon")
             end)
         end,
     })
@@ -706,6 +711,15 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
                 and workspace.Interiors.School.Doors:FindFirstChild("MainDoor")
         end
 
+        if petHasActiveKey(pet, "salon") then
+            return workspace:FindFirstChild("Interiors")
+                and workspace.Interiors:FindFirstChild("MainMap!Default")
+                and workspace.Interiors["MainMap!Default"].Doors
+                and workspace.Interiors["MainMap!Default"].Doors:FindFirstChild("Salon/MainDoor")
+                and workspace.Interiors["MainMap!Default"].Doors["Salon/MainDoor"]:FindFirstChild("WorkingParts")
+                and workspace.Interiors["MainMap!Default"].Doors["Salon/MainDoor"].WorkingParts:FindFirstChild("TouchToEnter")
+        end
+
         if petHasActiveKey(pet, "beach", "beach_party") then
             local furniture = workspace:FindFirstChild("HouseInteriors")
                 and workspace.HouseInteriors:FindFirstChild("furniture")
@@ -732,6 +746,25 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
         return nil
     end
 
+    local function getSpecialNeedName(pet)
+        if PetState.isSchool(pet) or petHasActiveKey(pet, "school") then
+            return "school"
+        end
+        if petHasActiveKey(pet, "salon") then
+            return "salon"
+        end
+        if petHasActiveKey(pet, "beach", "beach_party") then
+            return "beach"
+        end
+        if petHasActiveKey(pet, "camp", "camping", "sleeping_bag") then
+            return "camping"
+        end
+        if petHasActiveKey(pet, "playground", "park", "roundabout", "bored") then
+            return "playground"
+        end
+        return "special area"
+    end
+
     local function getTeleportTarget(name)
         if name == "beach" then
             local furniture = workspace:FindFirstChild("HouseInteriors")
@@ -754,6 +787,13 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
                 return nil
             end
             return campNode:FindFirstChild("SleepingBag", true) or campNode
+        elseif name == "salon" then
+            return workspace:FindFirstChild("Interiors")
+                and workspace.Interiors:FindFirstChild("MainMap!Default")
+                and workspace.Interiors["MainMap!Default"].Doors
+                and workspace.Interiors["MainMap!Default"].Doors:FindFirstChild("Salon/MainDoor")
+                and workspace.Interiors["MainMap!Default"].Doors["Salon/MainDoor"]:FindFirstChild("WorkingParts")
+                and workspace.Interiors["MainMap!Default"].Doors["Salon/MainDoor"].WorkingParts:FindFirstChild("TouchToEnter")
         elseif name == "playground" then
             return workspace:FindFirstChild("StaticMap")
                 and workspace.StaticMap:FindFirstChild("Park")
@@ -789,7 +829,7 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
     end
 
     local function teleportForSpecialNeed(pet)
-        setStatus("Teleporting for special need")
+        setStatus("TPing to " .. getSpecialNeedName(pet))
         
         -- Exit house to load special areas
         if not exitHouseToMainArea() then
@@ -807,9 +847,11 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
         -- TP to furniture object
         if teleportToSafePart(target) then
             task.wait(1)
+            return true
         end
-        
-        return true
+
+        setStatus("Teleport failed to special area")
+        return false
     end
 
     local function teleportToNamedTargetAsync(name)
