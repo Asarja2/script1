@@ -188,6 +188,7 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
     local HoldBaby = Remotes.HoldBaby
     local EjectBaby = Remotes.EjectBaby
     local ActivateFurniture = Remotes.ActivateFurniture
+    local UnsubscribeFromHouse = Remotes.UnsubscribeFromHouse
     local TeamSpawn = Remotes.TeamSpawn
     local DataChanged = Remotes.DataChanged
 
@@ -296,11 +297,13 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
         end
 
         if shouldTeleport then
+            -- Use TeamAPI/Spawn remote and wait for furniture to load
             if TeamSpawn then
                 pcall(function()
                     TeamSpawn:InvokeServer()
                 end)
             end
+            task.wait(5)  -- Wait for furniture to load
             if root then
                 root.CFrame = cf * CFrame.new(0, 0, -5)
             end
@@ -428,25 +431,33 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
     TpTab:CreateButton({
         Name = "TP Beach",
         Callback = function()
-            teleportToNamedTarget("beach")
+            task.spawn(function()
+                teleportToNamedTargetAsync("beach")
+            end)
         end,
     })
     TpTab:CreateButton({
         Name = "TP School",
         Callback = function()
-            teleportToNamedTarget("school")
+            task.spawn(function()
+                teleportToNamedTargetAsync("school")
+            end)
         end,
     })
     TpTab:CreateButton({
         Name = "TP Camping",
         Callback = function()
-            teleportToNamedTarget("camping")
+            task.spawn(function()
+                teleportToNamedTargetAsync("camping")
+            end)
         end,
     })
     TpTab:CreateButton({
         Name = "TP Playground",
         Callback = function()
-            teleportToNamedTarget("playground")
+            task.spawn(function()
+                teleportToNamedTargetAsync("playground")
+            end)
         end,
     })
 
@@ -684,7 +695,36 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
         return nil
     end
 
-    local function teleportToNamedTarget(name)
+    local function teleportForSpecialNeed(pet)
+        local target = findCustomTeleportTarget(pet)
+        if not target then
+            return false
+        end
+        setStatus("Teleporting for special need")
+        
+        -- Unsubscribe from house to load special area furniture
+        if UnsubscribeFromHouse then
+            pcall(function()
+                UnsubscribeFromHouse:InvokeServer(player, true)
+            end)
+        end
+        task.wait(5)  -- Wait for furniture to load
+        
+        return teleportToSafePart(target)
+    end
+
+    local function teleportToNamedTargetAsync(name)
+        setStatus("Loading furniture for " .. name)
+        
+        -- Unsubscribe from house to load special area furniture
+        if UnsubscribeFromHouse then
+            pcall(function()
+                UnsubscribeFromHouse:InvokeServer(player, true)
+            end)
+        end
+        task.wait(5)  -- Wait for furniture to load
+        
+        -- Now find the target after furniture is loaded
         local target = getTeleportTarget(name)
         if not target then
             setStatus("TP target not found: " .. name)
@@ -695,15 +735,6 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
         else
             setStatus("Teleport failed: " .. name)
         end
-    end
-
-    local function teleportForSpecialNeed(pet)
-        local target = findCustomTeleportTarget(pet)
-        if not target then
-            return false
-        end
-        setStatus("Teleporting for special need")
-        return teleportToSafePart(target)
     end
 
     local function autofarm()
