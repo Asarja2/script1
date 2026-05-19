@@ -256,31 +256,52 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
     end
 
     local function enterHouseViaDoor()
+        print("[ui] enterHouseViaDoor: attempting house exit + entry")
+
         if not exitHouseToMainArea() then
+            print("[ui] enterHouseViaDoor: exitHouseToMainArea failed")
             return false
         end
 
         local char = player.Character or player.CharacterAdded:Wait()
-        local hrp = char:WaitForChild("HumanoidRootPart")
-
-        local doorPart = workspace.HouseExteriors
-            and workspace.HouseExteriors["1"]
-            and workspace.HouseExteriors["1"].Micro
-            and workspace.HouseExteriors["1"].Micro.Doors
-            and workspace.HouseExteriors["1"].Micro.Doors.MainDoor
-            and workspace.HouseExteriors["1"].Micro.Doors.MainDoor.WorkingParts
-            and workspace.HouseExteriors["1"].Micro.Doors.MainDoor.WorkingParts:FindFirstChild("TouchToEnter")
-
-        if not doorPart then
-            setStatus("Door not found")
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if not hrp then
+            print("[ui] enterHouseViaDoor: missing HumanoidRootPart")
             return false
         end
 
-        -- Start above the door
-        char:PivotTo(hrp.CFrame + Vector3.new(0, 10, 0))
-        task.wait(0.5)
+        -- Try common path first
+        local function findHouseDoorTouch()
+            local p = workspace:FindFirstChild("HouseExteriors")
+            if p and p["1"] and p["1"].Micro and p["1"].Micro.Doors and p["1"].Micro.Doors.MainDoor then
+                local wp = p["1"].Micro.Doors.MainDoor:FindFirstChild("WorkingParts")
+                if wp then
+                    local t = wp:FindFirstChild("TouchToEnter")
+                    if t then return t end
+                end
+            end
+            -- Fallback: search descendants for TouchToEnter under HouseExteriors
+            if workspace:FindFirstChild("HouseExteriors") then
+                for _, v in pairs(workspace.HouseExteriors:GetDescendants()) do
+                    if v.Name == "TouchToEnter" and v:IsA("BasePart") then
+                        return v
+                    end
+                end
+            end
+            return nil
+        end
 
-        -- Fly towards door
+        local doorPart = findHouseDoorTouch()
+        if not doorPart then
+            setStatus("Door not found")
+            print("[ui] enterHouseViaDoor: Door TouchToEnter not found in HouseExteriors")
+            return false
+        end
+
+        print("[ui] enterHouseViaDoor: flying to door", doorPart:GetFullName())
+        -- start above the door so you "fly"
+        char:PivotTo(hrp.CFrame + Vector3.new(0, 10, 0))
+
         local RunService = game:GetService("RunService")
         local speed = 120
         local stopDistance = 2
@@ -305,6 +326,7 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
         end)
 
         task.wait(5)
+        print("[ui] enterHouseViaDoor: arrived at door")
         return true
     end
 
