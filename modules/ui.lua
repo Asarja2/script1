@@ -279,7 +279,7 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
             return false
         end
 
-        -- Try common path first
+        -- Find the house entry TouchToEnter part without loading outside areas.
         local function findHouseDoorTouch()
             local p = workspace:FindFirstChild("HouseExteriors")
             if p and p["1"] and p["1"].Micro and p["1"].Micro.Doors and p["1"].Micro.Doors.MainDoor then
@@ -1218,6 +1218,7 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
 
         if PetState.isHungry(pet) then
             setStatus("Feeding")
+            enterHouseViaDoor()
             local ok = false
             for i=1,3 do
                 if useFurniture("food", pet) then ok = true break end
@@ -1229,6 +1230,7 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
         end
         if PetState.isThirsty(pet) then
             setStatus("Drinking")
+            enterHouseViaDoor()
             local ok = false
             for i=1,3 do
                 if useFurniture("drink", pet) then ok = true break end
@@ -1240,6 +1242,7 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
         end
         if PetState.isToilet(pet) then
             setStatus("Toilet")
+            enterHouseViaDoor()
             local ok = false
             for i=1,3 do
                 if useFurniture("toilet", pet) then ok = true break end
@@ -1251,6 +1254,7 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
         end
         if PetState.isDirty(pet) then
             setStatus("Shower")
+            enterHouseViaDoor()
             local ok = false
             for i=1,3 do
                 if useFurniture("shower", pet) then ok = true break end
@@ -1262,6 +1266,7 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
         end
         if PetState.isSleepy(pet) then
             setStatus("Sleep")
+            enterHouseViaDoor()
             local ok = false
             for i=1,3 do
                 if useFurniture("bed", pet) then ok = true break end
