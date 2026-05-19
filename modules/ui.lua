@@ -311,7 +311,7 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
             if fallback then
                 local fp = resolveTeleportPart(fallback)
                 if fp then
-                    print("[ui] enterHouseViaDoor: falling back to MainDoor part", fp:GetFullName())
+                    print("[ui] enterHouseViaDoor: falling back to MainDoor part", safeName(fp))
                     -- place player above the fallback part
                     local char = player.Character or player.CharacterAdded:Wait()
                     local hrp = char and char:FindFirstChild("HumanoidRootPart")
@@ -326,7 +326,7 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
             return false
         end
 
-        print("[ui] enterHouseViaDoor: flying to door", doorPart:GetFullName())
+        print("[ui] enterHouseViaDoor: flying to door", safeName(doorPart))
         -- start above the door so you "fly"
         char:PivotTo(hrp.CFrame + Vector3.new(0, 10, 0))
 
@@ -424,7 +424,7 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
                 okMatch = true
             end
             if not okMatch then
-                print("[ui] useFurniture: found target does not match needType, ignoring:", needType, id, target and target:GetFullName() or "nil")
+                    print("[ui] useFurniture: found target does not match needType, ignoring:", needType, id, safeName(target))
                 id, target = nil, nil
             end
         end
@@ -438,7 +438,7 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
                 return false
             end
             id, target = findFunc()
-            print("[ui] re-scan after entering house — found:", id, target and target:GetFullName() or "nil")
+            print("[ui] re-scan after entering house — found:", id, safeName(target))
         end
 
         -- If not found, attempt entering house and rescanning a few times
@@ -446,7 +446,7 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
             local found = false
             for i = 1, 3 do
                 setStatus("TPing to house for " .. needType)
-                print("[ui] useFurniture: attempt", i, "to enter house and rescan for", needType)
+                    print("[ui] useFurniture: attempt", i, "to enter house and rescan for", needType)
                 if not enterHouseViaDoor() then
                     print("[ui] useFurniture: enterHouseViaDoor failed on attempt", i)
                 else
@@ -464,11 +464,11 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
                             okMatch = true
                         end
                         if not okMatch then
-                            print("[ui] useFurniture: rescan target doesn't match needType, ignoring:", id, target and target:GetFullName() or "nil")
+                            print("[ui] useFurniture: rescan target doesn't match needType, ignoring:", id, safeName(target))
                             id, target = nil, nil
                         end
                     end
-                    print("[ui] useFurniture: rescan result:", id, target and target:GetFullName() or "nil")
+                    print("[ui] useFurniture: rescan result:", id, safeName(target))
                     if id and target then
                         found = true
                         break
@@ -559,6 +559,18 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
 
     local function setStatus(t)
         setLabel(StatusLabel, "Status: " .. t, COLOR_DIM)
+    end
+
+    local function safeName(o)
+        if not o then return "nil" end
+        if type(o) ~= "userdata" then return tostring(o) end
+        if pcall(function() return o:GetFullName() end) then
+            return o:GetFullName()
+        end
+        if pcall(function() return tostring(o.Name) end) then
+            return tostring(o.Name)
+        end
+        return tostring(o)
     end
 
     NeedsTab:CreateSection("Pet Status")
@@ -1182,37 +1194,57 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
 
         if PetState.isHungry(pet) then
             setStatus("Feeding")
-            if not useFurniture("food", pet) then
-                setStatus("Missing: Food Bowl")
+            local ok = false
+            for i=1,3 do
+                if useFurniture("food", pet) then ok = true break end
+                setStatus("Missing: Food Bowl — retrying ("..i..")")
+                task.wait(1)
             end
+            if not ok then setStatus("Missing: Food Bowl") end
             return
         end
         if PetState.isThirsty(pet) then
             setStatus("Drinking")
-            if not useFurniture("drink", pet) then
-                setStatus("Missing: Water Bowl")
+            local ok = false
+            for i=1,3 do
+                if useFurniture("drink", pet) then ok = true break end
+                setStatus("Missing: Water Bowl — retrying ("..i..")")
+                task.wait(1)
             end
+            if not ok then setStatus("Missing: Water Bowl") end
             return
         end
         if PetState.isToilet(pet) then
             setStatus("Toilet")
-            if not useFurniture("toilet", pet) then
-                setStatus("Missing: Toilet")
+            local ok = false
+            for i=1,3 do
+                if useFurniture("toilet", pet) then ok = true break end
+                setStatus("Missing: Toilet — retrying ("..i..")")
+                task.wait(1)
             end
+            if not ok then setStatus("Missing: Toilet") end
             return
         end
         if PetState.isDirty(pet) then
             setStatus("Shower")
-            if not useFurniture("shower", pet) then
-                setStatus("Missing: Shower")
+            local ok = false
+            for i=1,3 do
+                if useFurniture("shower", pet) then ok = true break end
+                setStatus("Missing: Shower — retrying ("..i..")")
+                task.wait(1)
             end
+            if not ok then setStatus("Missing: Shower") end
             return
         end
         if PetState.isSleepy(pet) then
             setStatus("Sleep")
-            if not useFurniture("bed", pet) then
-                setStatus("Missing: Pet Bed")
+            local ok = false
+            for i=1,3 do
+                if useFurniture("bed", pet) then ok = true break end
+                setStatus("Missing: Pet Bed — retrying ("..i..")")
+                task.wait(1)
             end
+            if not ok then setStatus("Missing: Pet Bed") end
             return
         end
         if teleportForSpecialNeed(pet) then
