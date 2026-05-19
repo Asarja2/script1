@@ -292,9 +292,37 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
         end
 
         local doorPart = findHouseDoorTouch()
+        -- Try a few times: sometimes HouseExteriors take a moment to populate after exitHouseToMainArea
+        local doorPart = nil
+        for i = 1, 4 do
+            doorPart = findHouseDoorTouch()
+            if doorPart then break end
+            print("[ui] enterHouseViaDoor: TouchToEnter not found, retrying ("..i..")")
+            task.wait(1)
+        end
         if not doorPart then
+            print("[ui] enterHouseViaDoor: Door TouchToEnter not found after retries")
+            -- Fallback: try to find MainDoor model and teleport near it
+            local fallback = workspace:FindFirstChild("HouseExteriors")
+                and workspace.HouseExteriors["1"]
+                and workspace.HouseExteriors["1"].Micro
+                and workspace.HouseExteriors["1"].Micro.Doors
+                and workspace.HouseExteriors["1"].Micro.Doors.MainDoor
+            if fallback then
+                local fp = resolveTeleportPart(fallback)
+                if fp then
+                    print("[ui] enterHouseViaDoor: falling back to MainDoor part", fp:GetFullName())
+                    -- place player above the fallback part
+                    local char = player.Character or player.CharacterAdded:Wait()
+                    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+                    if hrp then
+                        char:PivotTo(fp.CFrame + Vector3.new(0, 5, 0))
+                        task.wait(1)
+                        return true
+                    end
+                end
+            end
             setStatus("Door not found")
-            print("[ui] enterHouseViaDoor: Door TouchToEnter not found in HouseExteriors")
             return false
         end
 
@@ -373,13 +401,27 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
             print("[ui] re-scan after entering house — found:", id, target and target:GetFullName() or "nil")
         end
 
-        -- If not found, TP to house and try again
+        -- If not found, attempt entering house and rescanning a few times
         if not id or not target then
-            setStatus("TPing to house for " .. needType)
-            if not enterHouseViaDoor() then
+            local found = false
+            for i = 1, 3 do
+                setStatus("TPing to house for " .. needType)
+                print("[ui] useFurniture: attempt", i, "to enter house and rescan for", needType)
+                if not enterHouseViaDoor() then
+                    print("[ui] useFurniture: enterHouseViaDoor failed on attempt", i)
+                else
+                    id, target = findFunc()
+                    print("[ui] useFurniture: rescan result:", id, target and target:GetFullName() or "nil")
+                    if id and target then
+                        found = true
+                        break
+                    end
+                end
+                task.wait(1)
+            end
+            if not found then
                 return false
             end
-            id, target = findFunc()
         end
 
         if not id or not target then
