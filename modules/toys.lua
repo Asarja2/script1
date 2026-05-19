@@ -1,16 +1,12 @@
---// Toys by name (unique id from equip_manager / backpack / nil instances)
+--// Toy unique id comes from equip_manager (id/kind = squeaky_bone_default) — never hardcoded
 
 local Toys = {}
 
-Toys.TOY_NAME = "squeaky_bone_default"
+Toys.TOY_ID = "squeaky_bone_default"
+Toys.TOY_KIND = "squeaky_bone_default"
 
-Toys.TOY_NAME_PATTERNS = {
-    "squeaky_bone_default",
-    "SqueakyToyTool",
-}
-
-local cachedUniqueId = nil
 local equipToys = {}
+local cachedEntry = nil
 
 local THROW_COUNT = 3
 local THROW_COOLDOWN = 5
@@ -19,126 +15,77 @@ local function lower(s)
     return tostring(s or ""):lower()
 end
 
-local function nameMatches(str)
-    local text = lower(str)
-    if text == lower(Toys.TOY_NAME) then
-        return true
-    end
-    for _, pattern in ipairs(Toys.TOY_NAME_PATTERNS) do
-        if text:find(lower(pattern), 1, true) then
-            return true
-        end
-    end
-    return false
-end
-
-local function toyEntryMatches(entry)
+local function isSqueakyBone(entry)
     if type(entry) ~= "table" then
         return false
     end
-    if lower(entry.kind) == lower(Toys.TOY_NAME) or lower(entry.id) == lower(Toys.TOY_NAME) then
-        return true
-    end
-    return nameMatches(entry.kind) or nameMatches(entry.id)
+    return lower(entry.id) == lower(Toys.TOY_ID) or lower(entry.kind) == lower(Toys.TOY_KIND)
 end
 
-local function getNilInstances()
-    if typeof(getnilinstances) == "function" then
-        return getnilinstances
-    end
-    local g = getgenv and getgenv() or _G
-    if g and typeof(g.getnilinstances) == "function" then
-        return g.getnilinstances
-    end
-    return nil
-end
-
+-- Called when DataAPI/DataChanged sends equip_manager (see Cobalt firesignal example)
 function Toys.parseEquipManager(data)
     equipToys = {}
+    cachedEntry = nil
+
     if type(data) ~= "table" or type(data.toys) ~= "table" then
-        return
+        return nil
     end
+
     for _, toy in pairs(data.toys) do
         if type(toy) == "table" and toy.unique then
             table.insert(equipToys, toy)
-            if toyEntryMatches(toy) then
-                cachedUniqueId = tostring(toy.unique)
+            if isSqueakyBone(toy) then
+                cachedEntry = toy
             end
         end
     end
+
+    return cachedEntry
 end
 
-local function uidFromTool(tool)
-    if not tool or not tool:IsA("Tool") then
-        return nil
-    end
-    if not nameMatches(tool.Name) then
-        return nil
-    end
-    local uid = tool:GetAttribute("unique")
-        or tool:GetAttribute("UniqueId")
-        or tool:GetAttribute("item_unique")
-    if uid then
-        return tostring(uid)
-    end
-    return nil
-end
-
-local function scanContainers(player)
-    if not player then
-        return nil
-    end
-    local list = {}
-    if player:FindFirstChildOfClass("Backpack") then
-        table.insert(list, player.Backpack)
-    end
-    if player.Character then
-        table.insert(list, player.Character)
-    end
-    for _, container in ipairs(list) do
-        for _, child in ipairs(container:GetChildren()) do
-            local uid = uidFromTool(child)
-            if uid then
-                cachedUniqueId = uid
-                return uid
-            end
-        end
-    end
-    local nilFn = getNilInstances()
-    if nilFn then
-        for _, inst in ipairs(nilFn()) do
-            local uid = uidFromTool(inst)
-            if uid then
-                cachedUniqueId = uid
-                return uid
-            end
-        end
-    end
-    return nil
-end
-
-function Toys.findToyByName(player)
-    if cachedUniqueId then
-        return cachedUniqueId
+function Toys.getEquipToyEntry()
+    if cachedEntry and isSqueakyBone(cachedEntry) then
+        return cachedEntry
     end
     for _, toy in ipairs(equipToys) do
-        if toyEntryMatches(toy) and toy.unique then
-            cachedUniqueId = tostring(toy.unique)
-            return cachedUniqueId
+        if isSqueakyBone(toy) then
+            cachedEntry = toy
+            return toy
         end
     end
-    return scanContainers(player)
+    return nil
 end
 
-function Toys.getToyId(player)
-    return Toys.findToyByName(player) or ""
+function Toys.hasEquipToy()
+    return Toys.getEquipToyEntry() ~= nil
+end
+
+function Toys.resolveUniqueId()
+    local entry = Toys.getEquipToyEntry()
+    if entry and entry.unique then
+        return tostring(entry.unique), entry
+    end
+    return nil, nil
+end
+
+function Toys.findToyByName(_player)
+    return Toys.resolveUniqueId()
+end
+
+function Toys.getToyId(_player)
+    local uid = Toys.resolveUniqueId()
+    return uid or ""
 end
 
 function Toys.getToyDisplayName()
-    return Toys.TOY_NAME
+    return Toys.TOY_ID
 end
 
 function Toys.equip(Remotes, uniqueId)
+    uniqueId = uniqueId or Toys.resolveUniqueId()
+    if not uniqueId then
+        return false, "no toy in equip_manager"
+    end
     return pcall(function()
         Remotes.ToolEquip:InvokeServer(uniqueId, {
             use_sound_delay = true,
@@ -148,6 +95,10 @@ function Toys.equip(Remotes, uniqueId)
 end
 
 function Toys.unequip(Remotes, uniqueId, fromThrow)
+    uniqueId = uniqueId or Toys.resolveUniqueId()
+    if not uniqueId then
+        return false
+    end
     return pcall(function()
         if fromThrow then
             Remotes.ToolUnequip:InvokeServer(uniqueId, {from_throw_toy = true})
@@ -158,18 +109,31 @@ function Toys.unequip(Remotes, uniqueId, fromThrow)
 end
 
 function Toys.useStart(Remotes, uniqueId)
+    uniqueId = uniqueId or Toys.resolveUniqueId()
+    if not uniqueId then
+        return false
+    end
     return pcall(function()
         Remotes.ServerUseTool:InvokeServer(uniqueId, "START")
     end)
 end
 
 function Toys.useEnd(Remotes, uniqueId)
+    uniqueId = uniqueId or Toys.resolveUniqueId()
+    if not uniqueId then
+        return false
+    end
     return pcall(function()
         Remotes.ServerUseTool:InvokeServer(uniqueId, "END", nil)
     end)
 end
 
+-- Cobalt: PetObjectAPI/CreatePetObject + ThrowToyReaction + unique_id from equip_manager
 function Toys.throwToy(Remotes, uniqueId)
+    uniqueId = uniqueId or Toys.resolveUniqueId()
+    if not uniqueId then
+        return false, "no toy in equip_manager"
+    end
     return pcall(function()
         Remotes.CreatePetObject:InvokeServer("__Enum_PetObjectCreatorType_1", {
             reaction_name = "ThrowToyReaction",
@@ -179,14 +143,23 @@ function Toys.throwToy(Remotes, uniqueId)
 end
 
 function Toys.throwOnce(Remotes, uniqueId)
+    uniqueId = uniqueId or Toys.resolveUniqueId()
+    if not uniqueId then
+        return false, "no toy in equip_manager"
+    end
     Toys.equip(Remotes, uniqueId)
     task.wait(0.35)
     Toys.throwToy(Remotes, uniqueId)
     task.wait(0.4)
     Toys.unequip(Remotes, uniqueId, true)
+    return true
 end
 
 function Toys.throwThreeTimes(Remotes, uniqueId, stillNeedsFn)
+    uniqueId = uniqueId or Toys.resolveUniqueId()
+    if not uniqueId then
+        return false, "no toy in equip_manager"
+    end
     for i = 1, THROW_COUNT do
         if stillNeedsFn and not stillNeedsFn() then
             break
@@ -202,6 +175,10 @@ function Toys.throwThreeTimes(Remotes, uniqueId, stillNeedsFn)
 end
 
 function Toys.playUntilDone(Remotes, uniqueId, stillNeedsFn)
+    uniqueId = uniqueId or Toys.resolveUniqueId()
+    if not uniqueId then
+        return false, "no toy in equip_manager"
+    end
     Toys.equip(Remotes, uniqueId)
     task.wait(0.35)
     Toys.useStart(Remotes, uniqueId)

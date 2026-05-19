@@ -69,7 +69,12 @@ function Requirements.scan(Care, Sleep, Toys, player)
         local detail = nil
 
         if item.toy then
-            if Toys and Toys.findToyByName then
+            if Toys and Toys.hasEquipToy then
+                found = Toys.hasEquipToy()
+                if found and Toys.resolveUniqueId then
+                    detail = Toys.resolveUniqueId()
+                end
+            elseif Toys and Toys.findToyByName then
                 detail = Toys.findToyByName(player)
                 found = detail ~= nil and detail ~= ""
             end

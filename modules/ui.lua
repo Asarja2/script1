@@ -99,7 +99,9 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
         for _, item in ipairs(REQ_ITEMS) do
             local found = false
             if item.toy then
-                if Toys.findToyByName then
+                if Toys.hasEquipToy then
+                    found = Toys.hasEquipToy()
+                elseif Toys.findToyByName then
                     local uid = Toys.findToyByName(player)
                     found = uid ~= nil and uid ~= ""
                 end
@@ -277,12 +279,11 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
     end
 
     local function refreshToyLabel()
-        local uid = getToyId()
         local name = (Toys.getToyDisplayName and Toys.getToyDisplayName()) or "squeaky_bone_default"
-        if uid ~= "" then
-            setLabel(ToyIdLabel, "Toy: " .. name .. "  (resolved)", COLOR_DIM)
+        if Toys.hasEquipToy and Toys.hasEquipToy() then
+            setLabel(ToyIdLabel, "Toy: " .. name .. "  ·  equip_manager", COLOR_ACTIVE)
         else
-            setLabel(ToyIdLabel, "Toy: " .. name .. "  (open toy backpack)", COLOR_WARN)
+            setLabel(ToyIdLabel, "Toy: " .. name .. "  ·  open toys menu", COLOR_WARN)
         end
     end
 
@@ -437,34 +438,48 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
         end)
     end
 
-    local function doPlay(pet)
+    local function resolveToyOrWarn()
         local uid = getToyId()
         if uid == "" then
-            setStatus("Toy not found — open toy backpack")
+            setStatus("No squeaky_bone_default in equip_manager — open toys")
+            return nil
+        end
+        return uid
+    end
+
+    local function doPlay(pet)
+        local uid = resolveToyOrWarn()
+        if not uid then
             return
         end
         if not stillPlay(pet) then
             setStatus("No play need detected")
             return
         end
-        setStatus("Playing squeaky toy")
+        setStatus("Playing squeaky_bone_default")
         Toys.playUntilDone(Remotes, uid, function()
             return stillPlay(pet)
         end)
         setStatus("Play finished")
     end
 
-    local function doThrow(pet)
-        local uid = getToyId()
-        if uid == "" then
-            setStatus("Toy not found — open toy backpack")
+    -- manual test: one throw; autofarm uses throwThreeTimes
+    local function doThrow(pet, forTest)
+        local uid = resolveToyOrWarn()
+        if not uid then
             return
         end
-        if not stillPlay(pet) then
+        if not forTest and not stillPlay(pet) then
             setStatus("No play need detected")
             return
         end
-        setStatus("Throwing toy (3x, 5s apart)")
+        if forTest then
+            setStatus("Throw test (equip → throw → unequip)")
+            local ok, err = Toys.throwOnce(Remotes, uid)
+            setStatus(ok and "Throw test done" or ("Throw failed: " .. tostring(err)))
+            return
+        end
+        setStatus("Throwing (3x, 5s apart)")
         Toys.throwThreeTimes(Remotes, uid, function()
             return stillPlay(pet)
         end)
@@ -669,6 +684,17 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
 
     ControlsTab:CreateSection("Toys")
     ControlsTab:CreateButton({
+        Name = "Refresh Toy (equip_manager)",
+        Callback = function()
+            refreshToyLabel()
+            if Toys.hasEquipToy and Toys.hasEquipToy() then
+                setStatus("squeaky_bone_default ready")
+            else
+                setStatus("Open toys menu to sync equip_manager")
+            end
+        end,
+    })
+    ControlsTab:CreateButton({
         Name = "Play Toy",
         Callback = function()
             local p = getPet()
@@ -680,14 +706,16 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
         end,
     })
     ControlsTab:CreateButton({
-        Name = "Throw Toy",
+        Name = "Throw Toy (test)",
         Callback = function()
             local p = getPet()
-            if p then
-                runAction(function()
-                    doThrow(p)
-                end)
+            if not p then
+                setStatus("Select a pet first")
+                return
             end
+            runAction(function()
+                doThrow(p, true)
+            end)
         end,
     })
     ControlsTab:CreateSection("Autofarm")
