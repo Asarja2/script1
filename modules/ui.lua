@@ -424,8 +424,16 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
                 okMatch = true
             end
             if not okMatch then
-                    print("[ui] useFurniture: found target does not match needType, ignoring:", needType, id, safeName(target))
+                print("[ui] useFurniture: found target does not match needType, ignoring:", needType, id, safeName(target))
                 id, target = nil, nil
+            end
+
+            -- For food/drink, require furniture be in HouseInteriors (player house) only
+            if id and target and (needType == "food" or needType == "drink") then
+                if not (workspace:FindFirstChild("HouseInteriors") and target:IsDescendantOf(workspace.HouseInteriors)) then
+                    print("[ui] useFurniture: ignoring non-house", needType, safeName(target))
+                    id, target = nil, nil
+                end
             end
         end
 
@@ -466,6 +474,13 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
                         if not okMatch then
                             print("[ui] useFurniture: rescan target doesn't match needType, ignoring:", id, safeName(target))
                             id, target = nil, nil
+                        end
+                        -- for food/drink ensure target is in HouseInteriors
+                        if id and target and (needType == "food" or needType == "drink") then
+                            if not (workspace:FindFirstChild("HouseInteriors") and target:IsDescendantOf(workspace.HouseInteriors)) then
+                                print("[ui] useFurniture: rescan ignored non-house", needType, safeName(target))
+                                id, target = nil, nil
+                            end
                         end
                     end
                     print("[ui] useFurniture: rescan result:", id, safeName(target))
