@@ -77,20 +77,6 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
         walkWithPet = function() end,
     }
 
-    Requirements = Requirements or {
-        ITEMS = {},
-        scan = function() return {results = {}, missing = {}, readyCount = 0, total = 0} end,
-        getLastScan = function() return {results = {}, missing = {}, readyCount = 0, total = 0} end,
-        has = function() return false end,
-        canHandleNeed = function() return true end,
-        formatRow = function(label, ready)
-            return ready and ("●  " .. label .. "  ·  ready") or ("○  " .. label .. "  ·  missing")
-        end,
-        getSummaryText = function()
-            return "Status: no requirements module", COLOR_WARN
-        end,
-    }
-
     local player = game:GetService("Players").LocalPlayer
 
     local REQ_ITEMS = {
@@ -270,7 +256,12 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
     end
 
     local function enterHouseViaDoor()
-        print("[ui] enterHouseViaDoor: attempting house entry")
+        print("[ui] enterHouseViaDoor: attempting house exit + entry")
+
+        if not exitHouseToMainArea() then
+            print("[ui] enterHouseViaDoor: exitHouseToMainArea failed")
+            return false
+        end
 
         local char = player.Character or player.CharacterAdded:Wait()
         local hrp = char and char:FindFirstChild("HumanoidRootPart")
@@ -279,19 +270,14 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
             return false
         end
 
-        -- Find the house entry TouchToEnter part without loading outside areas.
+        -- Try common path first
         local function findHouseDoorTouch()
-            if workspace:FindFirstChild("HouseExteriors")
-                and workspace.HouseExteriors:FindFirstChild("1")
-                and workspace.HouseExteriors["1"].Micro
-                and workspace.HouseExteriors["1"].Micro:FindFirstChild("Doors")
-                and workspace.HouseExteriors["1"].Micro.Doors:FindFirstChild("MainDoor")
-                and workspace.HouseExteriors["1"].Micro.Doors.MainDoor:FindFirstChild("WorkingParts")
-            then
-                local wp = workspace.HouseExteriors["1"].Micro.Doors.MainDoor.WorkingParts
-                local t = wp:FindFirstChild("TouchToEnter")
-                if t then
-                    return t
+            local p = workspace:FindFirstChild("HouseExteriors")
+            if p and p["1"] and p["1"].Micro and p["1"].Micro.Doors and p["1"].Micro.Doors.MainDoor then
+                local wp = p["1"].Micro.Doors.MainDoor:FindFirstChild("WorkingParts")
+                if wp then
+                    local t = wp:FindFirstChild("TouchToEnter")
+                    if t then return t end
                 end
             end
             -- Fallback: search descendants for TouchToEnter under HouseExteriors
@@ -305,6 +291,8 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
             return nil
         end
 
+        local doorPart = findHouseDoorTouch()
+        -- Try a few times: sometimes HouseExteriors take a moment to populate after exitHouseToMainArea
         local doorPart = nil
         for i = 1, 4 do
             doorPart = findHouseDoorTouch()
@@ -398,12 +386,6 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
             return false
         end
 
-        -- Force house entry before any care furniture lookup so the first TP is house door.
-        if needType == "food" or needType == "drink" or needType == "shower" or needType == "toilet" or needType == "bed" then
-            setStatus("TPing to house for " .. needType)
-            enterHouseViaDoor()
-        end
-
         -- Try to find furniture locally
         id, target = findFunc()
 
@@ -442,16 +424,8 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
                 okMatch = true
             end
             if not okMatch then
-                print("[ui] useFurniture: found target does not match needType, ignoring:", needType, id, safeName(target))
+                    print("[ui] useFurniture: found target does not match needType, ignoring:", needType, id, safeName(target))
                 id, target = nil, nil
-            end
-
-            -- For all care needs, require furniture inside the player's HouseInteriors
-            if id and target and (needType == "food" or needType == "drink" or needType == "shower" or needType == "toilet" or needType == "bed") then
-                if not (workspace:FindFirstChild("HouseInteriors") and target:IsDescendantOf(workspace.HouseInteriors)) then
-                    print("[ui] useFurniture: ignoring non-house", needType, safeName(target))
-                    id, target = nil, nil
-                end
             end
         end
 
@@ -492,13 +466,6 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
                         if not okMatch then
                             print("[ui] useFurniture: rescan target doesn't match needType, ignoring:", id, safeName(target))
                             id, target = nil, nil
-                        end
-                        -- for all care needs ensure target is in HouseInteriors
-                        if id and target and (needType == "food" or needType == "drink" or needType == "shower" or needType == "toilet" or needType == "bed") then
-                            if not (workspace:FindFirstChild("HouseInteriors") and target:IsDescendantOf(workspace.HouseInteriors)) then
-                                print("[ui] useFurniture: rescan ignored non-house", needType, safeName(target))
-                                id, target = nil, nil
-                            end
                         end
                     end
                     print("[ui] useFurniture: rescan result:", id, safeName(target))
@@ -1227,7 +1194,6 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
 
         if PetState.isHungry(pet) then
             setStatus("Feeding")
-            enterHouseViaDoor()
             local ok = false
             for i=1,3 do
                 if useFurniture("food", pet) then ok = true break end
@@ -1239,7 +1205,6 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
         end
         if PetState.isThirsty(pet) then
             setStatus("Drinking")
-            enterHouseViaDoor()
             local ok = false
             for i=1,3 do
                 if useFurniture("drink", pet) then ok = true break end
@@ -1251,7 +1216,6 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
         end
         if PetState.isToilet(pet) then
             setStatus("Toilet")
-            enterHouseViaDoor()
             local ok = false
             for i=1,3 do
                 if useFurniture("toilet", pet) then ok = true break end
@@ -1263,7 +1227,6 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
         end
         if PetState.isDirty(pet) then
             setStatus("Shower")
-            enterHouseViaDoor()
             local ok = false
             for i=1,3 do
                 if useFurniture("shower", pet) then ok = true break end
@@ -1275,7 +1238,6 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
         end
         if PetState.isSleepy(pet) then
             setStatus("Sleep")
-            enterHouseViaDoor()
             local ok = false
             for i=1,3 do
                 if useFurniture("bed", pet) then ok = true break end
