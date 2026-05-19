@@ -77,6 +77,20 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
         walkWithPet = function() end,
     }
 
+    Requirements = Requirements or {
+        ITEMS = {},
+        scan = function() return {results = {}, missing = {}, readyCount = 0, total = 0} end,
+        getLastScan = function() return {results = {}, missing = {}, readyCount = 0, total = 0} end,
+        has = function() return false end,
+        canHandleNeed = function() return true end,
+        formatRow = function(label, ready)
+            return ready and ("●  " .. label .. "  ·  ready") or ("○  " .. label .. "  ·  missing")
+        end,
+        getSummaryText = function()
+            return "Status: no requirements module", COLOR_WARN
+        end,
+    }
+
     local player = game:GetService("Players").LocalPlayer
 
     local REQ_ITEMS = {
@@ -423,8 +437,8 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
                 id, target = nil, nil
             end
 
-            -- For food/drink, require furniture be in HouseInteriors (player house) only
-            if id and target and (needType == "food" or needType == "drink") then
+            -- For all care needs, require furniture inside the player's HouseInteriors
+            if id and target and (needType == "food" or needType == "drink" or needType == "shower" or needType == "toilet" or needType == "bed") then
                 if not (workspace:FindFirstChild("HouseInteriors") and target:IsDescendantOf(workspace.HouseInteriors)) then
                     print("[ui] useFurniture: ignoring non-house", needType, safeName(target))
                     id, target = nil, nil
@@ -470,8 +484,8 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
                             print("[ui] useFurniture: rescan target doesn't match needType, ignoring:", id, safeName(target))
                             id, target = nil, nil
                         end
-                        -- for food/drink ensure target is in HouseInteriors
-                        if id and target and (needType == "food" or needType == "drink") then
+                        -- for all care needs ensure target is in HouseInteriors
+                        if id and target and (needType == "food" or needType == "drink" or needType == "shower" or needType == "toilet" or needType == "bed") then
                             if not (workspace:FindFirstChild("HouseInteriors") and target:IsDescendantOf(workspace.HouseInteriors)) then
                                 print("[ui] useFurniture: rescan ignored non-house", needType, safeName(target))
                                 id, target = nil, nil
