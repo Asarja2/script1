@@ -256,12 +256,7 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
     end
 
     local function enterHouseViaDoor()
-        print("[ui] enterHouseViaDoor: attempting house exit + entry")
-
-        if not exitHouseToMainArea() then
-            print("[ui] enterHouseViaDoor: exitHouseToMainArea failed")
-            return false
-        end
+        print("[ui] enterHouseViaDoor: attempting house entry")
 
         local char = player.Character or player.CharacterAdded:Wait()
         local hrp = char and char:FindFirstChild("HumanoidRootPart")
