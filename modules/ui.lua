@@ -273,7 +273,7 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
         print("[ui] enterHouseViaDoor: attempting house entry")
 
         local char = player.Character or player.CharacterAdded:Wait()
-        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        local hrp = char and char:WaitForChild("HumanoidRootPart", 5)
         if not hrp then
             print("[ui] enterHouseViaDoor: missing HumanoidRootPart")
             return false
@@ -326,7 +326,7 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
                     print("[ui] enterHouseViaDoor: falling back to MainDoor part", safeName(fp))
                     -- place player above the fallback part
                     local char = player.Character or player.CharacterAdded:Wait()
-                    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+                    local hrp = char and char:WaitForChild("HumanoidRootPart", 5)
                     if hrp then
                         char:PivotTo(fp.CFrame + Vector3.new(0, 5, 0))
                         task.wait(1)
@@ -370,8 +370,13 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
         end)
 
         task.wait(5)
-        print("[ui] enterHouseViaDoor: arrived at door")
-        return true
+        if not hrp or not hrp.Parent then
+            print("[ui] enterHouseViaDoor: HRP gone before arrival")
+            return false
+        end
+        local finalDistance = (doorPart.Position - hrp.Position).Magnitude
+        print("[ui] enterHouseViaDoor: arrived at door, distance=", finalDistance)
+        return finalDistance <= stopDistance + 1
     end
 
     local function useFurniture(needType, pet)
@@ -1033,7 +1038,7 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
 
         local char = player.Character
         if not char then return false end
-        local hrp = char:FindFirstChild("HumanoidRootPart")
+        local hrp = char:WaitForChild("HumanoidRootPart", 5)
         if not hrp then return false end
 
         -- If we are inside the house, teleport to the outside door entrance instead of a hardcoded coordinate.
@@ -1392,7 +1397,9 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
             if not p then
                 return
             end
-            useFurniture("food", p)
+            runAction(function()
+                useFurniture("food", p)
+            end)
         end,
     })
     ControlsTab:CreateButton({
@@ -1402,7 +1409,9 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
             if not p then
                 return
             end
-            useFurniture("drink", p)
+            runAction(function()
+                useFurniture("drink", p)
+            end)
         end,
     })
     ControlsTab:CreateButton({
@@ -1412,7 +1421,9 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
             if not p then
                 return
             end
-            useFurniture("shower", p)
+            runAction(function()
+                useFurniture("shower", p)
+            end)
         end,
     })
     ControlsTab:CreateButton({
@@ -1422,7 +1433,9 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
             if not p then
                 return
             end
-            useFurniture("toilet", p)
+            runAction(function()
+                useFurniture("toilet", p)
+            end)
         end,
     })
     ControlsTab:CreateButton({
@@ -1432,7 +1445,9 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
             if not p then
                 return
             end
-            useFurniture("bed", p)
+            runAction(function()
+                useFurniture("bed", p)
+            end)
         end,
     })
 
