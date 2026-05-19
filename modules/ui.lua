@@ -281,12 +281,17 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
 
         -- Find the house entry TouchToEnter part without loading outside areas.
         local function findHouseDoorTouch()
-            local p = workspace:FindFirstChild("HouseExteriors")
-            if p and p["1"] and p["1"].Micro and p["1"].Micro.Doors and p["1"].Micro.Doors.MainDoor then
-                local wp = p["1"].Micro.Doors.MainDoor:FindFirstChild("WorkingParts")
-                if wp then
-                    local t = wp:FindFirstChild("TouchToEnter")
-                    if t then return t end
+            if workspace:FindFirstChild("HouseExteriors")
+                and workspace.HouseExteriors:FindFirstChild("1")
+                and workspace.HouseExteriors["1"].Micro
+                and workspace.HouseExteriors["1"].Micro:FindFirstChild("Doors")
+                and workspace.HouseExteriors["1"].Micro.Doors:FindFirstChild("MainDoor")
+                and workspace.HouseExteriors["1"].Micro.Doors.MainDoor:FindFirstChild("WorkingParts")
+            then
+                local wp = workspace.HouseExteriors["1"].Micro.Doors.MainDoor.WorkingParts
+                local t = wp:FindFirstChild("TouchToEnter")
+                if t then
+                    return t
                 end
             end
             -- Fallback: search descendants for TouchToEnter under HouseExteriors
@@ -300,8 +305,6 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
             return nil
         end
 
-        local doorPart = findHouseDoorTouch()
-        -- Try a few times: sometimes HouseExteriors take a moment to populate after exitHouseToMainArea
         local doorPart = nil
         for i = 1, 4 do
             doorPart = findHouseDoorTouch()
@@ -393,6 +396,12 @@ function UI.Init(Pets, Sleep, Care, Remotes, PetState, Toys, Requirements)
             partName = "Seat1"
         else
             return false
+        end
+
+        -- Force house entry before any care furniture lookup so the first TP is house door.
+        if needType == "food" or needType == "drink" or needType == "shower" or needType == "toilet" or needType == "bed" then
+            setStatus("TPing to house for " .. needType)
+            enterHouseViaDoor()
         end
 
         -- Try to find furniture locally
